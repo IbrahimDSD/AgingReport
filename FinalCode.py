@@ -524,7 +524,6 @@ def export_pdf(report_df, params):
     # — table rows —
     pdf.set_font('DejaVu', '', 10)
     for _, row in report_df.iterrows():
-        # format numeric fields
         amt_cash = f"{float(str(row['amount_cash']).replace(',', '')):,.2f}" if row['amount_cash'] else "0.00"
         rem_cash = f"{float(str(row['remaining_cash']).replace(',', '')):,.2f}" if row['remaining_cash'] else "0.00"
         amt_gold = f"{float(str(row['amount_gold']).replace(',', '')):,.2f}" if row['amount_gold'] else "0.000"
@@ -544,9 +543,12 @@ def export_pdf(report_df, params):
             pdf.cell(w, 7, reshape_text(txt), border=1, align='C')
         pdf.ln()
 
-    # — return PDF as bytes so Streamlit can serve it correctly —
-    pdf_str   = pdf.output(dest='S')          # returns a str
-    return pdf_str.encode('latin-1')
+    # — output and normalize to bytes —
+    pdf_raw = pdf.output(dest='S')
+    if isinstance(pdf_raw, bytearray):
+        return bytes(pdf_raw)
+    # otherwise it's a str
+    return pdf_raw.encode('latin-1')
 
 # ----------------- Authentication Components -----------------
 def login_form():
