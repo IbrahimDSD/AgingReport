@@ -477,70 +477,86 @@ def export_pdf(report_df, params):
     params_list.insert(5, ("", ""))
 
     # — split into left/right halves —
-    half = len(params_list) // 2
-    left_params, right_params = params_list[:half], params_list[half:]
+    params_list = list(params.items())
+    params_list.insert(5, ("", ""))
+    left_params = params_list[:5]  # أول 3 عناصر لليسار
+    right_params = params_list[5:]  # الباقي لليمين
 
-    # — compute column widths & x‑position for right column —
-    usable_w = pdf.w - pdf.l_margin - pdf.r_margin
-    col_w    = usable_w / 2
-    right_x  = pdf.l_margin + col_w + 5  # small gap
+    # حساب أبعاد الخلايا
+    col_width = pdf.w / 2 - 20  # عرض كل عمود
 
-    # — render parameters in two columns —
-    for i in range(max(len(left_params), len(right_params))):
-        # Left column
+    # طباعة الصفوف بشكل متوازي
+    max_rows = max(len(left_params), len(right_params))
+    for i in range(max_rows):
+        # العمود الأيسر
         if i < len(left_params):
             key, value = left_params[i]
-            pdf.set_font('DejaVu', 'B', 12)          # label bold
-            pdf.cell(col_w, 10, reshape_text(key),  border=0, align='L')
-            pdf.set_font('DejaVu',   '', 12)          # value regular
-            pdf.cell(0,       10, str(value),         border=0, ln=1, align='L')
+            pdf.set_font('DejaVu', 'B', 12)  # label bold
+            pdf.cell(col_width, 10, reshape_text(key), border=0, align='L')
+            pdf.set_font('DejaVu', '', 12)  # value regular
+            pdf.cell(0, 10, str(value), border=0, ln=1, align='L')
 
-        # Right column
+        # العمود الأيمن
         if i < len(right_params):
             key, value = right_params[i]
-            pdf.set_x(right_x)
             pdf.set_font('DejaVu', 'B', 12)
-            pdf.cell(col_w, 10, reshape_text(key),  border=0, align='L')
-            pdf.set_font('DejaVu',   '', 12)
-            pdf.cell(0,       10, str(value),         border=0, ln=1, align='L')
+            pdf.cell(col_width, 10, reshape_text(key), border=0, align='L')
+            pdf.set_font('DejaVu', '', 12)
+            pdf.cell(0, 10, str(value), border=0, ln=1, align='L')
 
-    pdf.ln(5)
-
-    # — table header (8 columns) —
-    col_widths = [30, 40, 30, 35, 30, 35, 32, 30]
-    headers    = [
-        "التاريخ",       "الرقم المرجعي",
-        "ذهب عيار 21",   "تاريخ سداد الذهب",
-        "المبلغ النقدي", "تاريخ سداد النقدية",
-        "أيام سداد الذهب","أيام سداد النقدية"
-    ]
-
-    pdf.set_fill_color(200, 220, 255)
-    pdf.set_font('DejaVu', 'B', 12)
-    for w, h in zip(col_widths, headers):
-        pdf.cell(w, 10, reshape_text(h), border=1, fill=True, align='C')
     pdf.ln()
 
-    # — table rows —
-    pdf.set_font('DejaVu', '', 10)
-    for _, row in report_df.iterrows():
-        amt_cash = f"{float(str(row['amount_cash']).replace(',', '')):,.2f}" if row['amount_cash'] else "0.00"
-        rem_cash = f"{float(str(row['remaining_cash']).replace(',', '')):,.2f}" if row['remaining_cash'] else "0.00"
-        amt_gold = f"{float(str(row['amount_gold']).replace(',', '')):,.2f}" if row['amount_gold'] else "0.000"
-        rem_gold = f"{float(str(row['remaining_gold']).replace(',', '')):,.2f}" if row['remaining_gold'] else "0.000"
+    # إعداد أبعاد الأعمدة الجديدة (تم زيادة العرض بنسبة 30%)
+    col_widths = [
+        30,  # التاريخ
+        40,  # الرقم المرجعي
+        30,  # المبلغ النقدي
+        35,  # المتبقي نقدي
+        30,  # تاريخ الدفع
+        35,  # أيام التقادم
+        32,  # المبلغ ذهب
+        30,  # المتبقي ذهب
+        25  # أيام التقادم
+    ]
 
-        cells = [
+    # إضافة ترويسة الجدول مع خلفية ملونة
+    pdf.set_fill_color(200, 220, 255)
+    for width, header in zip(col_widths, [
+        "التاريخ",
+        "الرقم المرجعي",
+        "ذهب عيار 21",
+        "تاريخ سداد الذهب",
+        "المبلغ النقدي",
+        "تاريخ سداد النقدية",
+        "أيام سداد الذهب",
+        "أيام سداد النقدية",
+
+    ]):
+        pdf.cell(width, 10, reshape_text(header), border=1, fill=True, align='C')
+    pdf.ln()
+
+    # إضافة بيانات الجدول
+    for _, row in report_df.iterrows():
+        # معالجة البيانات لتنسيق الأرقام
+        amount_cash = f"{float(str(row['amount_cash']).replace(',', '')):,.2f}" if row['amount_cash'] else '0.00'
+        remaining_cash = f"{float(str(row['remaining_cash']).replace(',', '')):,.2f}" if row[
+            'remaining_cash'] else '0.00'
+        amount_gold = f"{float(str(row['amount_gold']).replace(',', '')):,.2f}" if row['amount_gold'] else '0.000'
+        remaining_gold = f"{float(str(row['remaining_gold']).replace(',', '')):,.2f}" if row[
+            'remaining_gold'] else '0.000'
+
+        for width, col in zip(col_widths, [
             str(row['date']),
             str(row['reference']),
-            amt_gold,
+            amount_gold,
             str(row['paid_date_gold']),
-            amt_cash,
+            amount_cash,
             str(row['paid_date_cash']),
             str(row['aging_days_gold']),
             str(row['aging_days_cash'])
-        ]
-        for w, txt in zip(col_widths, cells):
-            pdf.cell(w, 7, reshape_text(txt), border=1, align='C')
+
+        ]):
+            pdf.cell(width, 7, reshape_text(col), border=1, align='C')
         pdf.ln()
 
     # — output and normalize to bytes —
