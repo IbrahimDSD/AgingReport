@@ -780,6 +780,7 @@ def main_app():
                 "تاريخ النهاية": str(end_date),
                 "فترة سداد العميل": aging_threshold,
                 "احجار عيار 21": discount_50,
+                " ",
                 "سادة عيار 21": discount_61,
                 "ذهب مشغول عيار 18": discount_47,
                 "سادة عيار 18": discount_62,
