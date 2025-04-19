@@ -461,102 +461,85 @@ def reshape_text(text):
 
 def export_pdf(report_df, params):
     """توليد PDF مع دعم اللغة العربية وعرض أكبر"""
-    pdf = FPDF(orientation='L')  # تغيير الاتجاه إلى横向 (صفحة أفقية)
+    pdf = FPDF(orientation='L')
     pdf.add_page()
-    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
-    pdf.set_font('DejaVu', '', 12)  # تقليل حجم الخط لزيادة السعة
 
-    # إعداد الهوامش
-    pdf.set_left_margin(15)
-    pdf.set_right_margin(15)
+    # — load fonts —
+    pdf.add_font('DejaVu',   '',  'DejaVuSans.ttf',        uni=True)
+    pdf.add_font('DejaVu', 'B',  'DejaVuSans-Bold.ttf',   uni=True)
 
-    # إضافة العنوان
-    title = reshape_text("تقرير الخصومات ")
-    pdf.cell(0, 15, title, ln=1, align='C')
+    # — title in bold —
+    pdf.set_font('DejaVu', 'B', 14)
+    pdf.cell(0, 15, reshape_text("تقرير الخصومات"), ln=1, align='C')
 
-    # إضافة معايير التقرير
+    # — report parameters in two columns —
+    params_list  = list(params.items())
+    params_list.insert(5, ("", ""))
+    left_params  = params_list[: len(params_list)//2]
+    right_params = params_list[len(params_list)//2:]
+    col_w        = pdf.w/2 - 20
 
-    params_list = list(params.items())
-    left_params = params_list[:5]  # أول 3 عناصر لليسار
-    right_params = params_list[5:]  # الباقي لليمين
-
-    # حساب أبعاد الخلايا
-    col_width = pdf.w / 2 - 20  # عرض كل عمود
-
-    # طباعة الصفوف بشكل متوازي
-    max_rows = max(len(left_params), len(right_params))
-    for i in range(max_rows):
-        # العمود الأيسر
+    for i in range(max(len(left_params), len(right_params))):
+        # left column
         if i < len(left_params):
             key, value = left_params[i]
-            text = f"{reshape_text(key)}: {value}"
-            pdf.cell(col_width, 10, text, border=0, align='l')
-
-        # العمود الأيمن
+            pdf.set_font('DejaVu', 'B', 12)              # label bold
+            pdf.cell(col_w, 10, reshape_text(key),       border=0, align='L')
+            pdf.set_font('DejaVu',   '', 12)              # value regular
+            pdf.cell(col_w, 10, str(value),               border=0, ln=1, align='L')
+        # right column
         if i < len(right_params):
             key, value = right_params[i]
-            text = f"{reshape_text(key)}: {value}"
-            pdf.cell(col_width, 10, text, border=0, ln=1, align='l')
-        else:
-            pdf.ln()
+            pdf.set_x(pdf.l/2 + 5)                       # jump to right half
+            pdf.set_font('DejaVu', 'B', 12)
+            pdf.cell(col_w, 10, reshape_text(key),       border=0, align='L')
+            pdf.set_font('DejaVu',   '', 12)
+            pdf.cell(col_w, 10, str(value),               border=0, ln=1, align='L')
 
-    # إعداد أبعاد الأعمدة الجديدة (تم زيادة العرض بنسبة 30%)
-    col_widths = [
-        30,  # التاريخ
-        40,  # الرقم المرجعي
-        30,  # المبلغ النقدي
-        35,  # المتبقي نقدي
-        30,  # تاريخ الدفع
-        35,  # أيام التقادم
-        32,  # المبلغ ذهب
-        30,  # المتبقي ذهب
-        25  # أيام التقادم
+    pdf.ln(5)
+
+    # — table header (8 columns) —
+    col_widths = [30, 40, 30, 35, 30, 35, 32, 30]
+    headers    = [
+        "التاريخ", "الرقم المرجعي",
+        "ذهب عيار 21", "تاريخ سداد الذهب",
+        "المبلغ النقدي", "تاريخ سداد النقدية",
+        "أيام سداد الذهب","أيام سداد النقدية"
     ]
-
-    # إضافة ترويسة الجدول مع خلفية ملونة
     pdf.set_fill_color(200, 220, 255)
-    for width, header in zip(col_widths, [
-        "التاريخ",
-        "الرقم المرجعي",
-        "ذهب عيار 21",
-        "تاريخ سداد الذهب",
-        "المبلغ النقدي",
-        "تاريخ سداد النقدية",
-        "أيام سداد الذهب",
-        "أيام سداد النقدية",
-
-    ]):
-        pdf.cell(width, 10, reshape_text(header), border=1, fill=True, align='C')
+    pdf.set_font('DejaVu', 'B', 12)
+    for w, h in zip(col_widths, headers):
+        pdf.cell(w, 10, reshape_text(h), border=1, fill=True, align='C')
     pdf.ln()
 
-    # إضافة بيانات الجدول
+    # — table rows —
+    pdf.set_font('DejaVu', '', 10)
     for _, row in report_df.iterrows():
-        # معالجة البيانات لتنسيق الأرقام
-        amount_cash = f"{float(str(row['amount_cash']).replace(',', '')):,.2f}" if row['amount_cash'] else '0.00'
-        remaining_cash = f"{float(str(row['remaining_cash']).replace(',', '')):,.2f}" if row[
-            'remaining_cash'] else '0.00'
-        amount_gold = f"{float(str(row['amount_gold']).replace(',', '')):,.2f}" if row['amount_gold'] else '0.000'
-        remaining_gold = f"{float(str(row['remaining_gold']).replace(',', '')):,.2f}" if row[
-            'remaining_gold'] else '0.000'
+        # format numbers
+        amt_cash      = f"{float(str(row['amount_cash']).replace(',', '')):,.2f}" if row['amount_cash'] else "0.00"
+        rem_cash      = f"{float(str(row['remaining_cash']).replace(',', '')):,.2f}" if row['remaining_cash'] else "0.00"
+        amt_gold      = f"{float(str(row['amount_gold']).replace(',', '')):,.2f}" if row['amount_gold'] else "0.000"
+        rem_gold      = f"{float(str(row['remaining_gold']).replace(',', '')):,.2f}" if row['remaining_gold'] else "0.000"
 
-        for width, col in zip(col_widths, [
+        cells = [
             str(row['date']),
             str(row['reference']),
-            amount_gold,
+            amt_gold,
             str(row['paid_date_gold']),
-            amount_cash,
+            amt_cash,
             str(row['paid_date_cash']),
             str(row['aging_days_gold']),
             str(row['aging_days_cash'])
-
-        ]):
-            pdf.cell(width, 7, reshape_text(col), border=1, align='C')
+        ]
+        for w, txt in zip(col_widths, cells):
+            pdf.cell(w, 7, reshape_text(txt), border=1, align='C')
         pdf.ln()
 
-    pdf_output = pdf.output(dest='S')
-    if isinstance(pdf_output, bytearray):
-        return bytes(pdf_output)
-    return pdf_output
+    # — return PDF as bytes —
+    pdf_str   = pdf.output(dest='S')            # returns a Python str
+    pdf_bytes = pdf_str.encode('latin-1')        # encode to bytes
+    return pdf_bytes
+
 
 
 # ----------------- Authentication Components -----------------
