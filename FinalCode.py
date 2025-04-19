@@ -472,54 +472,44 @@ def export_pdf(report_df, params):
     pdf.set_font('DejaVu', 'B', 14)
 pdf.cell(0, 15, reshape_text("تقرير الخصومات"), ln=1, align='C')
 
-# استخراج اسم العميل إذا موجود وعرضه بشكل منفصل
-customer_name = params.pop("اسم العميل", None)
+# استخراج اسم العميل وعرضه بشكل منفصل
+customer_name = params.pop("اسم العميل", "")
 
-# إعداد قائمة المعلمات مع إدراج صف فارغ في الموضع 5
-params_list = list(params.items())
-params_list.insert(5, ("", ""))
-
-# تقسيم إلى النصفين الأيسر والأيمن
-left_params = params_list[:5]
-right_params = params_list[5:]
-
-# طباعة اسم العميل في سطر كامل إذا كان موجودًا
 if customer_name:
     pdf.set_font('DejaVu', 'B', 14)
-    pdf.cell(0, 10, reshape_text(customer_name), ln=1, align='C')
+    pdf.cell(0, 10, reshape_text(f"اسم العميل: {customer_name}"), ln=1, align='C')
     pdf.ln(5)
 
-# إعداد أبعاد الأعمدة
-col_width = pdf.w / 2 - 15  # عرض كل عمود مع هامش
+# إعداد المعلمات في عمودين
+params_list = list(params.items())
+half = len(params_list) // 2
+left_params = params_list[:half]
+right_params = params_list[half:]
 
-# طباعة المعلمات في عمودين متوازيين
-max_rows = max(len(left_params), len(right_params))
-for i in range(max_rows):
-    # بداية السطر
+# أبعاد الأعمدة
+col_width = pdf.w / 2 - 15
+line_height = 10
+
+for i in range(max(len(left_params), len(right_params))):
+    # ------ العمود الأيسر ------
     pdf.set_x(10)  # بداية العمود الأيسر
-    
-    # العمود الأيسر
     if i < len(left_params):
         key, value = left_params[i]
-        if key:  # تجاهل الصفوف الفارغة
-            pdf.set_font('DejaVu', 'B', 12)
-            pdf.cell(col_width, 10, reshape_text(key), align='L')
-            pdf.set_font('DejaVu', '', 12)
-            pdf.cell(0, 10, str(value), ln=0, align='L')
+        pdf.set_font('DejaVu', 'B', 12)
+        pdf.cell(col_width, line_height, reshape_text(key), align='L')
+        pdf.set_font('DejaVu', '', 12)
+        pdf.cell(0, line_height, str(value), ln=0)
     
-    # الانتقال للعمود الأيمن
+    # ------ العمود الأيمن ------
     pdf.set_x(pdf.w / 2 + 5)  # بداية العمود الأيمن
-    
-    # العمود الأيمن
     if i < len(right_params):
         key, value = right_params[i]
-        if key:  # تجاهل الصفوف الفارغة
-            pdf.set_font('DejaVu', 'B', 12)
-            pdf.cell(col_width, 10, reshape_text(key), align='L')
-            pdf.set_font('DejaVu', '', 12)
-            pdf.cell(0, 10, str(value), ln=0, align='L')
+        pdf.set_font('DejaVu', 'B', 12)
+        pdf.cell(col_width, line_height, reshape_text(key), align='L')
+        pdf.set_font('DejaVu', '', 12)
+        pdf.cell(0, line_height, str(value), ln=0)
     
-    pdf.ln()  # الانتقال للسطر التالي
+    pdf.ln(line_height)  # الانتقال للسطر التالي
 
 pdf.ln(10)
 
