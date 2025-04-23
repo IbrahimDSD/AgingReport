@@ -274,7 +274,9 @@ def process_report(df, currency_type):
 def process_transactions(raw, discounts, extras, start_date):
     if raw.empty:
         return pd.DataFrame()
-
+    raw = raw.copy()
+    raw['date'] = pd.to_datetime(raw['date'], errors='coerce')
+    raw = raw.dropna(subset=['date'])
     def calc_row(r):
         base = r['baseAmount'] + r['basevatamount']
         if pd.to_datetime(r['date']) >= start_date:
@@ -388,30 +390,25 @@ def process_fifo_detailed(debits, credits):
 #----------------------------------------------
 def show_override_selector(raw, start_dt, key="overrides"):
     if raw is None or raw.empty:
-        #st.info("لا توجد عمليات متاحة للاختيار (plantid=56 & functionid=3103) بعد تاريخ البدء.")
         return []
 
     raw['date'] = pd.to_datetime(raw['date'], errors='coerce')
     mask = (
-            (raw['plantid'] == 56) &
-            (raw['functionid'] == 3103) &
-            (raw['date'] > start_dt)
+        (raw['plantid'] == 56) &
+        (raw['date'] > start_dt)
     )
-
     subset = raw.loc[mask]
 
-
-    # إنشاء تسميات تحتوي على بيانات رقمية فقط
-    labels = subset.apply(
-        lambda r: f"{r['functionid']}|{r['recordid']}|{r['date'].date()}|{r['amount']}|{r['reference']}",
-        axis=1
-    ).tolist()
+    # Build labels as a plain Python list
+    labels = [
+        f"{row['functionid']}|{row['recordid']}|{row['date'].date()}|{row['amount']}|{row['reference']}|{row['description']}"
+        for _, row in subset.iterrows()
+    ]
 
     return st.multiselect(
-        ""
-        ,
+        "",
         labels,
-        format_func=lambda x: f"Reference: {x.split('|')[4]} - Date: {x.split('|')[2]} - Amount: {x.split('|')[3]}",
+        format_func=lambda x: f"Reference: {x.split('|')[4]} - Date: {x.split('|')[2]} - Amount: {x.split('|')[3]}- Description:{x.split('|')[5]}",
         key=key
     )
 
@@ -421,7 +418,7 @@ def apply_overrides(raw, start_dt, chosen):
         try:
             # تفكيك البيانات بشكل آمن
             parts = label.split('|')
-            if len(parts) != 5:
+            if len(parts) != 6:
                 continue
 
             fid = int(parts[0])  # functionid
@@ -460,118 +457,115 @@ def reshape_text(text):
 
 
 def export_pdf(report_df, params):
-    """توليد PDF مع دعم اللغة العربية وعرض أكبر"""
+    """توليد PDF مع دعم اللغة العربية وعرض أكبر، مع تمييز المتأخرة باللون الأحمر."""
     pdf = FPDF(orientation='L')
     pdf.add_page()
+    pdf.add_font('DejaVu', '', r'D:\FinalCode-main\FinalCode-main\dejavu-sans\DejaVuSans.ttf', uni=True)
+    pdf.set_font('DejaVu', '', 12)
 
-    # — load fonts —
-    pdf.add_font('DejaVu',   '',  'DejaVuSans.ttf',        uni=True)
-    pdf.add_font('DejaVu', 'B',  'DejaVuSans-Bold.ttf',   uni=True)
+    # margins
+    pdf.set_left_margin(15)
+    pdf.set_right_margin(15)
 
-    # — title in bold —
-    pdf.set_font('DejaVu', 'B', 14)
-pdf.cell(0, 15, reshape_text("تقرير الخصومات"), ln=1, align='C')
+    # title
+    title = reshape_text("تقرير الخصومات ")
+    pdf.cell(0, 15, title, ln=1, align='C')
 
-# استخراج اسم العميل وعرضه بشكل منفصل
-customer_name = params.pop("اسم العميل", "")
+    # signature data
+    threshold = params.get("فترة سداد العميل", 0)
 
-if customer_name:
-    pdf.set_font('DejaVu', 'B', 14)
-    pdf.cell(0, 10, reshape_text(f"اسم العميل: {customer_name}"), ln=1, align='C')
-    pdf.ln(5)
+    # ——— print customer on its own full line ———
+    customer = params.get("اسم العميل")
+    if customer is not None:
+        line = f"{reshape_text('اسم العميل')}: {customer}"
+        pdf.cell(0, 10, line, border=0, ln=1, align='L')
+        del params["اسم العميل"]
 
-# إعداد المعلمات في عمودين
-params_list = list(params.items())
-half = len(params_list) // 2
-left_params = params_list[:half]
-right_params = params_list[half:]
+    # two-column params layout
+    params_list = list(params.items())
+    half = len(params_list) // 2
+    left_params, right_params = params_list[:half], params_list[half:]
+    col_width = pdf.w / 2 - 20
+    for i in range(max(len(left_params), len(right_params))):
+        if i < len(left_params):
+            k, v = left_params[i]
+            pdf.cell(col_width, 8, f"{reshape_text(k)}: {v}", border=0, align='L')
+        if i < len(right_params):
+            k, v = right_params[i]
+            pdf.cell(col_width, 8, f"{reshape_text(k)}: {v}", border=0, ln=1, align='L')
+        else:
+            pdf.ln()
 
-# أبعاد الأعمدة
-col_width = pdf.w / 2 - 15
-line_height = 10
-
-for i in range(max(len(left_params), len(right_params))):
-    # ------ العمود الأيسر ------
-    pdf.set_x(10)  # بداية العمود الأيسر
-    if i < len(left_params):
-        key, value = left_params[i]
-        pdf.set_font('DejaVu', 'B', 12)
-        pdf.cell(col_width, line_height, reshape_text(key), align='L')
-        pdf.set_font('DejaVu', '', 12)
-        pdf.cell(0, line_height, str(value), ln=0)
-    
-    # ------ العمود الأيمن ------
-    pdf.set_x(pdf.w / 2 + 5)  # بداية العمود الأيمن
-    if i < len(right_params):
-        key, value = right_params[i]
-        pdf.set_font('DejaVu', 'B', 12)
-        pdf.cell(col_width, line_height, reshape_text(key), align='L')
-        pdf.set_font('DejaVu', '', 12)
-        pdf.cell(0, line_height, str(value), ln=0)
-    
-    pdf.ln(line_height)  # الانتقال للسطر التالي
-
-pdf.ln(10)
-
-    # إعداد أبعاد الأعمدة الجديدة (تم زيادة العرض بنسبة 30%)
+    # table column widths
     col_widths = [
         30,  # التاريخ
         40,  # الرقم المرجعي
+        30,  # ذهب عيار 21
+        35,  # تاريخ سداد الذهب
         30,  # المبلغ النقدي
-        35,  # المتبقي نقدي
-        30,  # تاريخ الدفع
-        35,  # أيام التقادم
-        32,  # المبلغ ذهب
-        30,  # المتبقي ذهب
-        25  # أيام التقادم
+        35,  # تاريخ سداد النقدية
+        32,  # أيام سداد الذهب
+        30,  # أيام سداد النقدية
     ]
 
-    # إضافة ترويسة الجدول مع خلفية ملونة
+    # headers
+    headers = [
+        "التاريخ", "الرقم المرجعي",
+        "ذهب عيار 21", "تاريخ سداد الذهب",
+        "المبلغ النقدي", "تاريخ سداد النقدية",
+        "أيام سداد الذهب", "أيام سداد النقدية"
+    ]
     pdf.set_fill_color(200, 220, 255)
-    for width, header in zip(col_widths, [
-        "التاريخ",
-        "الرقم المرجعي",
-        "ذهب عيار 21",
-        "تاريخ سداد الذهب",
-        "المبلغ النقدي",
-        "تاريخ سداد النقدية",
-        "أيام سداد الذهب",
-        "أيام سداد النقدية",
-
-    ]):
-        pdf.cell(width, 10, reshape_text(header), border=1, fill=True, align='C')
+    for w, h in zip(col_widths, headers):
+        pdf.cell(w, 10, reshape_text(h), border=1, fill=True, align='C')
     pdf.ln()
 
-    # إضافة بيانات الجدول
+    # data rows with conditional red fill
     for _, row in report_df.iterrows():
-        # معالجة البيانات لتنسيق الأرقام
-        amount_cash = f"{float(str(row['amount_cash']).replace(',', '')):,.2f}" if row['amount_cash'] else '0.00'
-        remaining_cash = f"{float(str(row['remaining_cash']).replace(',', '')):,.2f}" if row[
-            'remaining_cash'] else '0.00'
-        amount_gold = f"{float(str(row['amount_gold']).replace(',', '')):,.2f}" if row['amount_gold'] else '0.000'
-        remaining_gold = f"{float(str(row['remaining_gold']).replace(',', '')):,.2f}" if row[
-            'remaining_gold'] else '0.000'
+        # parse ages as ints (or 0)
+        cash_age = int(row['aging_days_cash']) if row['aging_days_cash'] not in ('-', '') else 0
+        gold_age = int(row['aging_days_gold']) if row['aging_days_gold'] not in ('-', '') else 0
 
-        for width, col in zip(col_widths, [
+        # set highlight color
+        pdf.set_fill_color(255, 204, 203)
+
+        # prepare cell values
+        cells = [
             str(row['date']),
             str(row['reference']),
-            amount_gold,
+            f"{float(str(row['amount_gold']).replace(',', '')):,.2f}",
             str(row['paid_date_gold']),
-            amount_cash,
+            f"{float(str(row['amount_cash']).replace(',', '')):,.2f}",
             str(row['paid_date_cash']),
             str(row['aging_days_gold']),
-            str(row['aging_days_cash'])
+            str(row['aging_days_cash']),
+        ]
 
-        ]):
-            pdf.cell(width, 7, reshape_text(col), border=1, align='C')
+        # which cells to fill
+        fills = [
+            False,                                # date
+            False,                                # reference
+            False,                 # amount_gold
+            False,                 # paid_date_gold
+            False,                 # amount_cash
+            False,                 # paid_date_cash
+           gold_age > threshold,                 # aging_days_gold
+            cash_age > threshold                  # aging_days_cash
+        ]
+
+        # draw row
+        for w, text, do_fill in zip(col_widths, cells, fills):
+            pdf.cell(w, 7, reshape_text(text), border=1, fill=do_fill, align='C')
         pdf.ln()
 
-    # — output and normalize to bytes —
-    pdf_raw = pdf.output(dest='S')
-    if isinstance(pdf_raw, bytearray):
-        return bytes(pdf_raw)
-    # otherwise it's a str
-    return pdf_raw.encode('latin-1')
+    # signature
+    pdf.ln(8)
+    pdf.set_font('DejaVu', '', 18)
+    pdf.cell(0, 8, "Generated by BI", ln=1, align='R')
+
+    pdf_output = pdf.output(dest='S')
+    return bytes(pdf_output) if isinstance(pdf_output, bytearray) else pdf_output
+
 
 # ----------------- Authentication Components -----------------
 def login_form():
@@ -666,7 +660,7 @@ def main_app():
     if st.session_state.get('force_password_change', False):
         password_change_form()
         return
-
+    st.set_page_config(page_title="Invoice Aging System", layout="wide")
     if st.session_state.role == "admin":
         user_management()
     with st.sidebar:
@@ -703,7 +697,7 @@ def main_app():
     if selected_customer != "Select Customer...":
         cid = int(customers.iloc[cust_list.index(selected_customer) - 1]['recordid'])
         query = """
-            SELECT f.plantid, f.functionid, f.recordid, f.date, f.reference,
+            SELECT f.plantid, f.functionid, f.recordid, f.date, f.reference,f.description,
                    f.currencyid, f.amount, s.qty, s.baseAmount, s.basevatamount, ivit.categoryid
             FROM fitrx f
             LEFT JOIN satrx s ON f.functionid=s.functionid AND f.recordid=s.recordid
@@ -717,7 +711,35 @@ def main_app():
 
     # Show override selector BEFORE Generate Report
     st.markdown("### اختر العمليات خزينة الخصومات:")
-    overrides = show_override_selector(raw, pd.to_datetime(start_date), key="overrides_pre_generate")
+
+    # Re‑compute the available labels so we know how many there *should* be
+    labels = []
+    if raw is not None and not raw.empty:
+        tmp = raw.copy()
+        tmp['date'] = pd.to_datetime(tmp['date'], errors='coerce')
+        mask = (
+                (tmp['plantid'] == 56)  &
+                (tmp['date'] > pd.to_datetime(start_date))
+        )
+        subset = tmp.loc[mask]
+        labels = [
+            f"{r['functionid']}|{r['recordid']}|{r['date'].date()}|{r['amount']}|{r['reference']} |{r['description']}"
+            for _, r in subset.iterrows()
+        ]
+
+    # Let the user pick from exactly those labels
+    overrides = st.multiselect(
+        "",
+        options=labels,
+        format_func=lambda x: f"Reference: {x.split('|')[4]} – Date: {x.split('|')[2]} – Amount: {x.split('|')[3]} - Description:{x.split('|')[5]}",
+        key="overrides_pre_generate"
+    )
+
+    # If there’s more than one candidate, require ALL of them
+    if len(labels) > 0 and len(overrides) != len(labels):
+        st.error(f"⛔ يجب اختيار جميع العمليات ({len(labels)}) قبل عمل Generate.")
+        # disable the rest of the logic
+        return
 
     if st.sidebar.button("Generate Report"):
         if selected_customer == "Select Customer...":
@@ -738,6 +760,10 @@ def main_app():
 
         # Apply overrides using the selected transactions
         raw2 = raw.copy()
+        raw2.loc[raw2['plantid'] == 56, 'date'] = pd.to_datetime(start_date)
+
+        # 3) Drop plantid=56 entirely so they never show up later
+        raw2 = raw2[raw2['plantid'] != 56]
         raw2 = apply_overrides(raw2, pd.to_datetime(start_date), overrides)
 
         # Process transactions
@@ -753,7 +779,7 @@ def main_app():
         report['date_dt'] = pd.to_datetime(report['date'])
         report = report[(report['date_dt'] >= pd.to_datetime(start_date)) & (report['date_dt'] <= pd.to_datetime(end_date))]
         report = report.sort_values(by=['date_dt', 'paid_date_cash', 'paid_date_gold'],
-                                   ascending=[True, True, True]).reset_index(drop=True)
+                                    ascending=[True, True, True]).reset_index(drop=True)
         report = report.drop(columns=['date_dt'])
         # Format amounts with two decimals and thousands separator
         for col in ['amount_cash', 'remaining_cash', 'amount_gold', 'remaining_gold']:
@@ -794,6 +820,7 @@ def main_app():
                 "تاريخ النهاية": str(end_date),
                 "فترة سداد العميل": aging_threshold,
                 "احجار عيار 21": discount_50,
+                #"":                "",
                 "سادة عيار 21": discount_61,
                 "ذهب مشغول عيار 18": discount_47,
                 "سادة عيار 18": discount_62,
@@ -865,20 +892,20 @@ def main_app():
                 else:
                     gold_credits.append({'date': r['date'], 'amount': abs(r['converted'])})
         cash_details = process_fifo_detailed(sorted(cash_debits, key=lambda x: x['date']),
-                                            sorted(cash_credits, key=lambda x: x['date']))
+                                             sorted(cash_credits, key=lambda x: x['date']))
         gold_details = process_fifo_detailed(sorted(gold_debits, key=lambda x: x['date']),
-                                            sorted(gold_credits, key=lambda x: x['date']))
+                                             sorted(gold_credits, key=lambda x: x['date']))
         cash_details_df = pd.DataFrame(cash_details)
         gold_details_df = pd.DataFrame(gold_details)
 
         if not cash_details_df.empty:
             cash_details_df['date'] = pd.to_datetime(cash_details_df['date'])
             cash_details_df = cash_details_df[(cash_details_df['date'] >= pd.to_datetime(start_date)) &
-                                             (cash_details_df['date'] <= pd.to_datetime(end_date))]
+                                              (cash_details_df['date'] <= pd.to_datetime(end_date))]
         if not gold_details_df.empty:
             gold_details_df['date'] = pd.to_datetime(gold_details_df['date'])
             gold_details_df = gold_details_df[(gold_details_df['date'] >= pd.to_datetime(start_date)) &
-                                             (gold_details_df['date'] <= pd.to_datetime(end_date))]
+                                              (gold_details_df['date'] <= pd.to_datetime(end_date))]
         # Format amounts for display
         if not cash_details_df.empty:
             cash_details_df['Remaining %'] = cash_details_df.apply(
@@ -907,17 +934,17 @@ def main_app():
         st.markdown("### تفاصيل سداد الذهب")
         if not gold_details_df.empty:
             st.dataframe(gold_details_df[
-                            ['Invoice Date', 'reference', 'invoice_amount', 'Payment', 'remaining', 'Remaining %',
-                             'Paid Date', 'aging_days']
-                        ].reset_index(drop=True), use_container_width=True)
+                             ['Invoice Date', 'reference', 'invoice_amount', 'Payment', 'remaining', 'Remaining %',
+                              'Paid Date', 'aging_days']
+                         ].reset_index(drop=True), use_container_width=True)
         else:
             st.info("لا توجد بيانات سداد ذهباً لهذه الفاتورة.")
         st.markdown("### تفاصيل سداد النقدية")
         if not cash_details_df.empty:
             st.dataframe(cash_details_df[
-                            ['Invoice Date', 'reference', 'invoice_amount', 'Payment', 'remaining', 'Remaining %',
-                             'Paid Date', 'aging_days']
-                        ].reset_index(drop=True), use_container_width=True)
+                             ['Invoice Date', 'reference', 'invoice_amount', 'Payment', 'remaining', 'Remaining %',
+                              'Paid Date', 'aging_days']
+                         ].reset_index(drop=True), use_container_width=True)
         else:
             st.info("لا توجد بيانات سداد نقداً لهذه الفاتورة.")
 
