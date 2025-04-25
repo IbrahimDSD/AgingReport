@@ -760,11 +760,19 @@ def main_app():
 
         # Apply overrides using the selected transactions
         raw2 = raw.copy()
-        raw2.loc[raw2['plantid'] == 56, 'date'] = pd.to_datetime(start_date)
+        raw2['date'] = pd.to_datetime(raw2['date'], errors='coerce')
 
-        # 3) Drop plantid=56 entirely so they never show up later
-        raw2 = raw2[raw2['plantid'] != 56]
-        raw2 = apply_overrides(raw2, pd.to_datetime(start_date), overrides)
+        # 2) حذف كل plantid=56 من نوع Debit (amount > 0)
+        mask_debits_56 = (raw2['plantid'] == 56) & (raw2['amount'] > 0)
+        raw2 = raw2.loc[~mask_debits_56].copy()
+
+        # 3) (اختياري) لو عندك Overrides تطبيقهم بعد الحذف
+        for label in overrides:
+            fid, rid, *_ = label.split('|')
+            raw2.loc[
+                (raw2['functionid'] == int(fid)) & (raw2['recordid'] == int(rid)),
+                'date'
+            ] = pd.to_datetime(start_date)
 
         # Process transactions
         txs = process_transactions(raw2, discounts, extras, pd.to_datetime(start_date))
