@@ -460,7 +460,7 @@ def export_pdf(report_df, params):
     """توليد PDF مع دعم اللغة العربية وعرض أكبر، مع تمييز المتأخرة باللون الأحمر."""
     pdf = FPDF(orientation='L')
     pdf.add_page()
-    pdf.add_font('DejaVu', '', r'D:\FinalCode-main\FinalCode-main\dejavu-sans\DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
     pdf.set_font('DejaVu', '', 12)
 
     # margins
