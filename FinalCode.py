@@ -1,967 +1,745 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import sqlitecloud
-from datetime import datetime
-from passlib.hash import pbkdf2_sha256
+from datetime import date, datetime
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import SQLAlchemyError
-from collections import deque
 from urllib.parse import quote_plus
-import time
 from fpdf import FPDF
+import arabic_reshaper
+from bidi.algorithm import get_display
+from collections import deque
+import os
+import matplotlib.pyplot as plt
+from io import BytesIO
+import matplotlib.font_manager as fm
 
-# -------------- Helpers --------------
-def rerun():
-    st.experimental_rerun()
+# ----------------- Helpers -----------------
+def reshape_text(txt):
+    return get_display(arabic_reshaper.reshape(str(txt)))
 
-# --------- User‑DB Setup  ---------
-USER_DB_URI = (
-    "sqlitecloud://cpran7d0hz.g2.sqlite.cloud:8860/"
-    "user_management.db?apikey=oUEez4Dc0TFsVVIVFu8SDRiXea9YVQLOcbzWBsUwZ78"
-)
-
-def get_sqlitecloud_connection():
-    try:
-        return sqlitecloud.connect(USER_DB_URI)
-    except Exception as e:
-        st.error(f"❌ Failed to connect to User DB: {e}")
-        return None
-
-def init_user_db():
-    conn = get_sqlitecloud_connection()
-    if not conn:
-        return
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          username TEXT UNIQUE,
-          password_hash TEXT,
-          role TEXT,
-          full_name TEXT,
-          force_password_change INTEGER DEFAULT 0,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS report_logs (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          user_id INTEGER,
-          timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          duration REAL,
-          FOREIGN KEY(user_id) REFERENCES users(id)
-        )
-    """)
-    c.execute("SELECT 1 FROM users WHERE username='admin'")
-    if not c.fetchone():
-        pw = pbkdf2_sha256.hash("admin123")
-        c.execute(
-            "INSERT INTO users(username,password_hash,role,full_name,force_password_change) "
-            "VALUES (?,?,?,?,1)",
-            ("admin", pw, "admin", "System Admin")
-        )
-    conn.commit()
-    conn.close()
-
-init_user_db()
-
-# --------- User Management  ----------
-def create_user(username, password, role, full_name):
-    conn = get_sqlitecloud_connection()
-    if not conn:
-        return False
-    c = conn.cursor()
-    try:
-        pw = pbkdf2_sha256.hash(password)
-        c.execute(
-            "INSERT INTO users(username,password_hash,role,full_name,force_password_change) "
-            "VALUES (?,?,?,?,1)",
-            (username, pw, role, full_name)
-        )
-        conn.commit()
-        return True
-    except Exception:
-        return False
-    finally:
-        conn.close()
-
-def reset_user_password(user_id, new_password):
-    conn = get_sqlitecloud_connection()
-    if not conn:
-        return
-    c = conn.cursor()
-    pw = pbkdf2_sha256.hash(new_password)
-    c.execute(
-        "UPDATE users SET password_hash=?, force_password_change=1 WHERE id=?",
-        (pw, user_id)
-    )
-    conn.commit()
-    conn.close()
-
-def delete_user(user_id):
-    conn = get_sqlitecloud_connection()
-    if not conn:
-        return
-    c = conn.cursor()
-    c.execute("DELETE FROM report_logs WHERE user_id=?", (user_id,))
-    c.execute("DELETE FROM users WHERE id=?", (user_id,))
-    conn.commit()
-    conn.close()
-
-def get_all_users():
-    conn = get_sqlitecloud_connection()
-    if not conn:
-        return []
-    c = conn.cursor()
-    c.execute("SELECT id, username, role, full_name FROM users")
-    users = c.fetchall()
-    conn.close()
-    return users
-
-def verify_user(username, password):
-    conn = get_sqlitecloud_connection()
-    if not conn:
-        return None, None, False
-    c = conn.cursor()
-    c.execute(
-        "SELECT id, password_hash, role, force_password_change FROM users WHERE username=?",
-        (username,)
-    )
-    row = c.fetchone()
-    conn.close()
-    if row and pbkdf2_sha256.verify(password, row[1]):
-        return row[0], row[2], bool(row[3])
-    return None, None, False
-
-def change_password(user_id, new_password):
-    conn = get_sqlitecloud_connection()
-    if not conn:
-        return
-    c = conn.cursor()
-    pw = pbkdf2_sha256.hash(new_password)
-    c.execute(
-        "UPDATE users SET password_hash=?, force_password_change=0 WHERE id=?",
-        (pw, user_id)
-    )
-    conn.commit()
-    conn.close()
-
-def log_report_generation(user_id, duration):
-    conn = get_sqlitecloud_connection()
-    if not conn:
-        return
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO report_logs(user_id,duration) VALUES (?,?)",
-        (user_id, duration)
-    )
-    conn.commit()
-    conn.close()
-
-def get_report_summary():
-    conn = get_sqlitecloud_connection()
-    if not conn:
-        return []
-    c = conn.cursor()
-    c.execute("""
-        SELECT u.username,
-               AVG(r.duration) AS avg_dur,
-               SUM(r.duration) AS total_dur,
-               COUNT(r.id)    AS cnt
-          FROM report_logs r
-          JOIN users u ON r.user_id = u.id
-      GROUP BY u.username
-    """)
-    data = c.fetchall()
-    conn.close()
-    return data
-
-# -------------- App‑DB Setup -------------
 def create_db_engine():
-    """إنشاء محرك اتصال بقاعدة البيانات."""
+    server = "52.48.117.197"
+    database = "R1029"
+    username = "sa"
+    password = "Argus@NEG"
+    driver = "ODBC Driver 17 for SQL Server"
+    odbc = (
+        f"DRIVER={{{driver}}};SERVER={server};DATABASE={database};"
+        f"UID={username};PWD={password};TrustServerCertificate=Yes;"
+    )
+    url = f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc)}"
     try:
-        server = "52.48.117.197"
-        database = "R1029"
-        username = "sa"
-        password = "Argus@NEG"
-        driver = "ODBC Driver 17 for SQL Server"
-        connection_string = f"DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password};TrustServerCertificate=Yes;Connection Timeout=30"
-        encoded_connection = quote_plus(connection_string)
-        engine = create_engine(f"mssql+pyodbc:///?odbc_connect={encoded_connection}")
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        return engine, None
+        eng = create_engine(url, connect_args={"timeout": 5})
+        with eng.connect():
+            pass
+        return eng, None
     except Exception as e:
         return None, str(e)
 
+def convert_gold(cur, amt):
+    if cur == 2:   return amt * 6.0 / 7.0
+    if cur == 3:   return amt
+    if cur == 4:   return amt * 24.0 / 21.0
+    if cur == 14:  return amt * 14.0 / 21.0
+    return amt
+
+def process_fifo(debits, credits, as_of):
+    credits = [c for c in credits if c["date"] <= as_of]
+    dq = deque(sorted(debits, key=lambda x: x["date"]))
+    excess = 0.0
+
+    for cr in sorted(credits, key=lambda x: x["date"]):
+        rem = cr["amount"]
+        while rem > 0 and dq:
+            d = dq[0]
+            ap = min(rem, d["remaining"])
+            d["remaining"] -= ap
+            rem -= ap
+            if d["remaining"] <= 0:
+                d["paid_date"] = cr["date"]
+                dq.popleft()
+        excess += rem
+
+    total_remaining = sum(d["remaining"] for d in dq)
+    net_balance = total_remaining - excess
+    return dq, net_balance
+
+def bucketize(days, grace, length):
+    if days <= grace:
+        return None
+    adj = days - grace
+    if adj <= length:
+        return f"{grace + 1}-{grace + length}"
+    if adj <= 2 * length:
+        return f"{grace + length + 1}-{grace + 2 * length}"
+    if adj <= 3 * length:
+        return f"{grace + 2 * length + 1}-{grace + 3 * length}"
+    return f">{grace + 3 * length}"
+
+def format_number(value):
+    try:
+        value = float(value)
+        if value < 0:
+            return f"({abs(value):,.2f})"
+        elif value == 0:
+            return "-"
+        else:
+            return f"{value:,.2f}"
+    except (ValueError, TypeError):
+        return str(value)
 
 # ----------------- Data Fetching -----------------
 @st.cache_data(ttl=600)
-def fetch_data(query, params=None):
-    engine, error = create_db_engine()
-    if error:
-        st.error(f"❌ Database connection failed: {error}")
-        return None
-    try:
-        with engine.connect() as conn:
-            return pd.read_sql(text(query), conn, params=params)
-    except SQLAlchemyError as e:
-        st.error(f"❌ Error fetching data: {e}")
-        return None
-def calculate_vat(row):
-    if row['currencyid'] == 2:
-        return row['amount'] * 11.18
-    elif row['currencyid'] == 3:
-        return row['amount'] * 7.45
-    return 0.0
+def get_salespersons(_engine):
+    return pd.read_sql("SELECT recordid, name FROM sasp ORDER BY name", _engine)
 
-
-def convert_gold(row):
-    if row['reference'].startswith('S'):
-        qty = row.get('qty', np.nan)
-        if pd.isna(qty):
-            qty = row['amount']
-        if row['currencyid'] == 3:
-            return qty
-        elif row['currencyid'] == 2:
-            return qty * 6 / 7
-        elif row['currencyid'] == 14:
-            return qty * 14 / 21
-        elif row['currencyid'] == 4:
-            return qty * 24 / 21
+@st.cache_data(ttl=600)
+def get_customers(_engine, sp_id):
+    if sp_id is None:
+        sql = """
+            SELECT DISTINCT acc.recordid, acc.name, acc.spid, COALESCE(sasp.name, 'غير محدد') AS sp_name
+            FROM fiacc acc
+            LEFT JOIN sasp ON acc.spid = sasp.recordid
+            WHERE acc.groupid = 1
+            ORDER BY acc.name
+            """
+        return pd.read_sql(text(sql), _engine)
     else:
-        if row['currencyid'] == 2:
-            return row['amount'] * 6 / 7
-        elif row['currencyid'] == 4:
-            return row['amount'] * 24 / 21
-    return row['amount']
+        sql = """
+            SELECT DISTINCT acc.recordid, acc.name, acc.spid, sasp.name AS sp_name
+            FROM fiacc acc
+            JOIN sasp ON acc.spid = sasp.recordid
+            WHERE acc.spid = :sp
+            ORDER BY acc.name
+            """
+        return pd.read_sql(text(sql), _engine, params={"sp": sp_id})
 
-
-def process_fifo(debits, credits):
-    """معالجة FIFO بسيطة لإرجاع المعاملات المجمعة النهائية."""
-    debits_q = deque(debits)
-    history = []
-    for credit in sorted(credits, key=lambda x: x['date']):
-        rem = credit['amount']
-        while rem > 0 and debits_q:
-            d = debits_q[0]
-            apply_amt = min(rem, d['remaining'])
-            d['remaining'] -= apply_amt
-            rem -= apply_amt
-            if d['remaining'] <= 0:
-                d['paid_date'] = credit['date']
-                history.append(debits_q.popleft())
-    history.extend([d for d in debits_q if d['remaining'] > 0])
-    return history
-
-
-def process_report(df, currency_type):
-    df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.floor('D')
-    df['paid_date'] = pd.to_datetime(df['paid_date'], errors='coerce').dt.floor('D')
-    df['aging_days'] = np.where(df['paid_date'].isna(), '-',
-                                (df['paid_date'] - df['date']).dt.days.fillna(0).astype(int))
-    for col in ['amount', 'remaining', 'vat_amount']:
-        df[col] = df[col].round(2)
-    df['paid_date'] = df.apply(lambda r: r['paid_date'].strftime('%Y-%m-%d') if pd.notna(r['paid_date']) else 'Unpaid',
-                               axis=1)
-    df['date'] = df['date'].dt.strftime('%Y-%m-%d')
-    suffix = '_gold' if currency_type != 1 else '_cash'
-    return df.rename(columns={'date': 'date', 'reference': 'reference'}).add_suffix(suffix).rename(
-        columns={f'date{suffix}': 'date', f'reference{suffix}': 'reference'})
-
-
-def process_transactions(raw, discounts, extras, start_date):
-    if raw.empty:
-        return pd.DataFrame()
-    raw = raw.copy()
-    raw['date'] = pd.to_datetime(raw['date'], errors='coerce')
-    raw = raw.dropna(subset=['date'])
-    def calc_row(r):
-        base = r['baseAmount'] + r['basevatamount']
-        if pd.to_datetime(r['date']) >= start_date:
-            disc = discounts.get(r['categoryid'], 0)
-            extra = extras.get(r['categoryid'], 0)
-            return base - (disc * r['qty']) - (extra * r['qty'])
-        return base
-
-    def group_fn(g):
-        fr = g.iloc[0]
-        ref, cur, orig = fr['reference'], fr['currencyid'], fr['amount']
-        if ref.startswith('S') and cur == 1:
-            valid = g[~g['baseAmount'].isna()].copy()
-            valid['final'] = valid.apply(calc_row, axis=1)
-            amt = valid['final'].sum()
-        else:
-            amt = orig
-        return pd.Series({'date': fr['date'], 'reference': ref,
-                          'currencyid': cur, 'amount': amt, 'original_amount': orig})
-
-    grp = raw.groupby(['functionid', 'recordid', 'date', 'reference', 'currencyid', 'amount'])
-    txs = grp.apply(group_fn).reset_index(drop=True)
-    txs['date'] = pd.to_datetime(txs['date'])
-    txs['converted'] = txs.apply(convert_gold, axis=1)
-    return txs
-
-
-def calculate_aging_reports(transactions):
-    """حساب تقرير Aging المُجمّع باستخدام FIFO."""
-    cash_debits, cash_credits, gold_debits, gold_credits = [], [], [], []
-    transactions['vat_amount'] = transactions.apply(calculate_vat, axis=1)
-    transactions['converted'] = transactions.apply(convert_gold, axis=1)
-    for _, r in transactions.iterrows():
-        entry = {'date': r['date'], 'reference': r['reference'],
-                 'amount': abs(r['converted']), 'remaining': abs(r['converted']),
-                 'paid_date': None, 'vat_amount': r['vat_amount']}
-        if r['currencyid'] == 1:
-            (cash_debits if r['amount'] > 0 else cash_credits).append(entry)
-        else:
-            (gold_debits if r['amount'] > 0 else gold_credits).append(entry)
-    cash = process_fifo(sorted(cash_debits, key=lambda x: x['date']), cash_credits)
-    gold = process_fifo(sorted(gold_debits, key=lambda x: x['date']), gold_credits)
-    cash_df = process_report(pd.DataFrame(cash), 1)
-    gold_df = process_report(pd.DataFrame(gold), 2)
-    df = pd.merge(cash_df, gold_df, on=['date', 'reference'], how='outer').fillna({
-        'amount_gold': 0, 'remaining_gold': 0, 'paid_date_gold': '-', 'aging_days_gold': '-', 'vat_amount_gold': 0,
-        'amount_cash': 0, 'remaining_cash': 0, 'paid_date_cash': '-', 'aging_days_cash': '-', 'vat_amount_cash': 0,
-
-    })
-    return df[['date', 'reference', 'amount_gold', 'remaining_gold', 'paid_date_gold', 'aging_days_gold',
-               'amount_cash', 'remaining_cash', 'paid_date_cash', 'aging_days_cash'
-               ]]
-
-
-# ----------------- New Function: Detailed FIFO Processing -----------------
-def process_fifo_detailed(debits, credits):
-    """
-    Simulate FIFO and record each payment application event as a separate event.
-    Each event includes:
-      - date: invoice date
-      - reference: invoice reference
-      - currencyid: 1 for cash, otherwise gold
-      - invoice_amount: original invoice amount
-      - applied: applied amount for this event
-      - remaining: remaining balance after this event
-      - paid_date: the date when this payment was applied (None if not paid)
-      - aging_days: days between invoice and payment (or between invoice and today if unpaid)
-    """
-    # Only consider debits with date >= 01/01/2023
-    debits = [d for d in debits if d['date'] >= pd.to_datetime("2023-01-01")]
-    debits_q = deque(debits)
-    detailed = []
-    sorted_credits = sorted(credits, key=lambda x: x['date'])
-    for credit in sorted_credits:
-        if credit['date'] < pd.to_datetime("2023-01-01"):
-            continue
-        rem_credit = credit['amount']
-        while rem_credit > 0 and debits_q:
-            d = debits_q[0]
-            payment = min(rem_credit, d['remaining'])
-            d['remaining'] -= payment
-            rem_credit -= payment
-            event = {
-                'date': d['date'],
-                'reference': d['reference'],
-                'currencyid': d['currencyid'],
-                'invoice_amount': d['amount'],
-                'Payment': payment,
-                'remaining': d['remaining'],
-                'paid_date': credit['date'],
-                'aging_days': (credit['date'] - d['date']).days
-            }
-            detailed.append(event)
-            if d['remaining'] == 0:
-                debits_q.popleft()
-    today = pd.Timestamp(datetime.now().date())
-    while debits_q:
-        d = debits_q.popleft()
-        event = {
-            'date': d['date'],
-            'reference': d['reference'],
-            'currencyid': d['currencyid'],
-            'invoice_amount': d['amount'],
-            'payment': 0,
-            'remaining': d['remaining'],
-            'paid_date': None,
-            'aging_days': (today - d['date']).days
-        }
-        detailed.append(event)
-    return detailed
-#----------------------------------------------
-def show_override_selector(raw, start_dt, key="overrides"):
-    if raw is None or raw.empty:
-        return []
-
-    raw['date'] = pd.to_datetime(raw['date'], errors='coerce')
-    mask = (
-        (raw['plantid'] == 56) &
-        (raw['date'] > start_dt)
-    )
-    subset = raw.loc[mask]
-
-    # Build labels as a plain Python list
-    labels = [
-        f"{row['functionid']}|{row['recordid']}|{row['date'].date()}|{row['amount']}|{row['reference']}|{row['description']}"
-        for _, row in subset.iterrows()
-    ]
-
-    return st.multiselect(
-        "",
-        labels,
-        format_func=lambda x: f"Reference: {x.split('|')[4]} - Date: {x.split('|')[2]} - Amount: {x.split('|')[3]}- Description:{x.split('|')[5]}",
-        key=key
-    )
-
-
-def apply_overrides(raw, start_dt, chosen):
-    for label in chosen:
-        try:
-            # تفكيك البيانات بشكل آمن
-            parts = label.split('|')
-            if len(parts) != 6:
-                continue
-
-            fid = int(parts[0])  # functionid
-            rid = int(parts[1])  # recordid
-
-            # تحديث التاريخ
-            raw.loc[
-                (raw['functionid'] == fid) &
-                (raw['recordid'] == rid),
-                'date'
-            ] = start_dt
-        except Exception as e:
-            st.error(f"خطأ في معالجة العملية: {label} - {str(e)}")
-            continue
-
-    return raw
-# ----------------- PDF Export Function -----------------
-try:
-    from fpdf import FPDF
-    import arabic_reshaper
-    from bidi.algorithm import get_display
-except ImportError as e:
-    st.error(f"Missing required package: {e}")
-
-
-def reshape_text(text):
-    """Properly reshape and format Arabic text"""
-    if not isinstance(text, str):
-        text = str(text)
-    try:
-        reshaped = arabic_reshaper.reshape(text)
-        return get_display(reshaped)
-    except Exception as e:
-        print(f"Text reshaping error: {e}")
-        return text
-
-
-def export_pdf(report_df, params):
-    """توليد PDF مع دعم اللغة العربية وعرض أكبر، مع تمييز المتأخرة باللون الأحمر."""
-    pdf = FPDF(orientation='L')
-    pdf.add_page()
-    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
-    pdf.set_font('DejaVu', '', 12)
-
-    # margins
-    pdf.set_left_margin(15)
-    pdf.set_right_margin(15)
-
-    # title
-    title = reshape_text("تقرير الخصومات ")
-    pdf.cell(0, 15, title, ln=1, align='C')
-
-    # signature data
-    threshold = params.get("فترة سداد العميل", 0)
-
-    # ——— print customer on its own full line ———
-    customer = params.get("اسم العميل")
-    if customer is not None:
-        line = f"{reshape_text('اسم العميل')}: {customer}"
-        pdf.cell(0, 10, line, border=0, ln=1, align='L')
-        del params["اسم العميل"]
-
-    # two-column params layout
-    params_list = list(params.items())
-    half = len(params_list) // 2
-    left_params, right_params = params_list[:half], params_list[half:]
-    col_width = pdf.w / 2 - 20
-    for i in range(max(len(left_params), len(right_params))):
-        if i < len(left_params):
-            k, v = left_params[i]
-            pdf.cell(col_width, 8, f"{reshape_text(k)}: {v}", border=0, align='L')
-        if i < len(right_params):
-            k, v = right_params[i]
-            pdf.cell(col_width, 8, f"{reshape_text(k)}: {v}", border=0, ln=1, align='L')
-        else:
-            pdf.ln()
-
-    # table column widths
-    col_widths = [
-        30,  # التاريخ
-        40,  # الرقم المرجعي
-        30,  # ذهب عيار 21
-        35,  # تاريخ سداد الذهب
-        30,  # المبلغ النقدي
-        35,  # تاريخ سداد النقدية
-        32,  # أيام سداد الذهب
-        30,  # أيام سداد النقدية
-    ]
-
-    # headers
-    headers = [
-        "التاريخ", "الرقم المرجعي",
-        "ذهب عيار 21", "تاريخ سداد الذهب",
-        "المبلغ النقدي", "تاريخ سداد النقدية",
-        "أيام سداد الذهب", "أيام سداد النقدية"
-    ]
-    pdf.set_fill_color(200, 220, 255)
-    for w, h in zip(col_widths, headers):
-        pdf.cell(w, 10, reshape_text(h), border=1, fill=True, align='C')
-    pdf.ln()
-
-    # data rows with conditional red fill
-    for _, row in report_df.iterrows():
-        # parse ages as ints (or 0)
-        cash_age = int(row['aging_days_cash']) if row['aging_days_cash'] not in ('-', '') else 0
-        gold_age = int(row['aging_days_gold']) if row['aging_days_gold'] not in ('-', '') else 0
-
-        # set highlight color
-        pdf.set_fill_color(255, 204, 203)
-
-        # prepare cell values
-        cells = [
-            str(row['date']),
-            str(row['reference']),
-            f"{float(str(row['amount_gold']).replace(',', '')):,.2f}",
-            str(row['paid_date_gold']),
-            f"{float(str(row['amount_cash']).replace(',', '')):,.2f}",
-            str(row['paid_date_cash']),
-            str(row['aging_days_gold']),
-            str(row['aging_days_cash']),
-        ]
-
-        # which cells to fill
-        fills = [
-            False,                                # date
-            False,                                # reference
-            False,                 # amount_gold
-            False,                 # paid_date_gold
-            False,                 # amount_cash
-            False,                 # paid_date_cash
-           gold_age > threshold,                 # aging_days_gold
-            cash_age > threshold                  # aging_days_cash
-        ]
-
-        # draw row
-        for w, text, do_fill in zip(col_widths, cells, fills):
-            pdf.cell(w, 7, reshape_text(text), border=1, fill=do_fill, align='C')
-        pdf.ln()
-
-    # signature
-    pdf.ln(8)
-    pdf.set_font('DejaVu', '', 18)
-    pdf.cell(0, 8, "Generated by BI", ln=1, align='R')
-
-    pdf_output = pdf.output(dest='S')
-    return bytes(pdf_output) if isinstance(pdf_output, bytearray) else pdf_output
-
-
-# ----------------- Authentication Components -----------------
-def login_form():
-    st.title("🔐 Invoice Aging System")
-    with st.form("Login"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
-        if submitted:
-            uid, role, force = verify_user(username, password)
-            if role:
-                st.session_state.logged_in = True
-                st.session_state.user_id = uid
-                st.session_state.username = username
-                st.session_state.role = role
-                st.session_state.force_password_change = force
-                return True
-            else:
-                st.error("Invalid username or password")
-                return False
-    return False
-
-
-def password_change_form():
-    st.title("🔑 Change Your Password")
-    st.write("You must change your password before continuing.")
-    with st.form("ChangePassword"):
-        new_pw = st.text_input("New Password", type="password")
-        confirm_pw = st.text_input("Confirm Password", type="password")
-        if st.form_submit_button("Update Password"):
-            if not new_pw or new_pw != confirm_pw:
-                st.error("Passwords do not match or are empty.")
-            else:
-                change_password(st.session_state.user_id, new_pw)
-                st.success("Password updated! Please log in again.")
-                for k in list(st.session_state.keys()):
-                    del st.session_state[k]
-                rerun()
-
-
-# ----------------- User Management Interface -----------------
-def user_management():
-    st.sidebar.header("👥 User Management")
-    with st.sidebar.expander("➕ Add New User"):
-        with st.form("Add User"):
-            new_username = st.text_input("Username", key="new_user")
-            new_password = st.text_input("Password", type="password", key="new_pass")
-            new_role = st.selectbox("Role", ["admin", "user"], key="new_role")
-            new_fullname = st.text_input("Full Name", key="new_name")
-            if st.form_submit_button("Create User"):
-                if create_user(new_username, new_password, new_role, new_fullname):
-                    st.success("✅ User created successfully. They will be prompted to change password on first login.")
-                else:
-                    st.error("❌ Username already exists")
-    with st.sidebar.expander("🔄 Reset User Password"):
-        users = get_all_users()
-        options = [f"{u[1]} ({u[3]})" for u in users]
-        selected = st.selectbox("Select user", options, key="reset_user")
-        new_pw = st.text_input("New Password", type="password", key="reset_pw")
-        if st.button("Reset Password"):
-            uid = [u[0] for u in users if f"{u[1]} ({u[3]})" == selected][0]
-            if new_pw:
-                reset_user_password(uid, new_pw)
-                st.success("✅ Password reset. User must change password at next login.")
-            else:
-                st.error("Enter a new password to reset.")
-    with st.sidebar.expander("➖ Remove User"):
-        users = get_all_users()
-        if users:
-            user_list = [f"{u[1]} ({u[3]})" for u in users if u[1] != st.session_state.username]
-            selected_user = st.selectbox("Select user to remove", user_list, key="del_user")
-            if st.button("Delete User"):
-                user_id = [u[0] for u in users if f"{u[1]} ({u[3]})" == selected_user][0]
-                delete_user(user_id)
-                rerun()
-        else:
-            st.write("No users to display")
-    with st.sidebar.expander("📊 Report Generation Summary"):
-        summary = get_report_summary()
-        if summary:
-            df = pd.DataFrame(
-                summary,
-                columns=['Username', 'Average Duration (s)', 'Total Duration (s)', 'Number of Reports']
-            )
-            st.dataframe(df)
-        else:
-            st.write("No logs available.")
-
-
-# ----------------- Main Application -----------------
-def main_app():
-    if st.session_state.get('force_password_change', False):
-        password_change_form()
-        return
-    st.set_page_config(page_title="Invoice Aging System", layout="wide")
-    if st.session_state.role == "admin":
-        user_management()
-    with st.sidebar:
-        st.write(f"👤 Logged in as: {st.session_state.username} ({st.session_state.role})")
-        if st.button("🚪 Logout"):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            rerun()
-
-    st.title("📊 Aging Report")
-    aging_threshold = st.sidebar.number_input("Enter Aging Days Threshold", min_value=0, value=30, step=1)
-
-    groups = fetch_data("SELECT recordid, name FROM figrp ORDER BY name")
-    if groups is None or groups.empty:
-        st.error("❌ No groups found or an error occurred while fetching groups.")
-        return
-
-    customers = fetch_data("SELECT recordid, name, reference FROM fiacc WHERE groupid = 1")
-    cust_list = ["Select Customer..."] + [f"{r['name']} ({r['reference']})" for _, r in customers.iterrows()]
-    selected_customer = st.sidebar.selectbox("Customer Name", cust_list)
-    start_date = st.sidebar.date_input("Start Date", datetime.now().replace(day=1))
-    end_date = st.sidebar.date_input("End Date", datetime.now())
-    st.sidebar.header("Category Discounts")
-    discount_50 = st.sidebar.number_input("احجار عيار 21", 0.0, 1000.0, 0.0)
-    discount_61 = st.sidebar.number_input("سادة عيار 21", 0.0, 1000.0, 0.0)
-    discount_47 = st.sidebar.number_input("ذهب مشغول عيار 18", 0.0, 1000.0, 0.0)
-    discount_62 = st.sidebar.number_input("سادة عيار 18", 0.0, 1000.0, 0.0)
-    discount_48 = st.sidebar.number_input("ستار 18", 0.0, 1000.0, 0.0)
-    discount_45 = st.sidebar.number_input("تعجيل دفع عيار 21", 0.0, 1000.0, 0.0)
-    discount_46 = st.sidebar.number_input("تعجيل دفع عيار 18", 0.0, 1000.0, 0.0)
-
-    # Fetch transaction data early if a customer is selected
-    raw = None
-    if selected_customer != "Select Customer...":
-        cid = int(customers.iloc[cust_list.index(selected_customer) - 1]['recordid'])
-        query = """
-            SELECT f.plantid, f.functionid, f.recordid, f.date, f.reference,f.description,
-                   f.currencyid, f.amount, s.qty, s.baseAmount, s.basevatamount, ivit.categoryid
+@st.cache_data(ttl=300)
+def get_overdues(_engine, sp_id, as_of, grace, length):
+    if sp_id is None:
+        sql = """
+            SELECT f.accountid, acc.reference AS code, acc.name AS name,
+                   f.currencyid, f.amount, f.date,
+                   COALESCE(f.reference, CAST(f.date AS VARCHAR)) AS invoiceref,
+                   acc.spid, COALESCE(sasp.name, 'غير محدد') AS sp_name
             FROM fitrx f
-            LEFT JOIN satrx s ON f.functionid=s.functionid AND f.recordid=s.recordid
-            LEFT JOIN ivit ON s.itemid=ivit.recordid
-            WHERE f.accountid = :acc
-        """
-        raw = fetch_data(query, {"acc": cid})
-        if raw is None or raw.empty:
-            st.warning("لا توجد معاملات متاحة للعميل المحدد.")
-            raw = None
+            JOIN fiacc acc ON f.accountid = acc.recordid
+            LEFT JOIN sasp ON acc.spid = sasp.recordid
+            WHERE acc.groupid = 1 AND f.date <= :as_of
+            ORDER BY acc.reference, f.date
+            """
+        raw = pd.read_sql(text(sql), _engine, params={"as_of": as_of})
+    else:
+        sql = """
+            SELECT f.accountid, acc.reference AS code, acc.name AS name,
+                   f.currencyid, f.amount, f.date,
+                   COALESCE(f.reference, CAST(f.date AS VARCHAR)) AS invoiceref,
+                   acc.spid, sasp.name AS sp_name
+            FROM fitrx f
+            JOIN fiacc acc ON f.accountid = acc.recordid
+            JOIN sasp ON acc.spid = sasp.recordid
+            WHERE acc.spid = :sp AND f.date <= :as_of
+            ORDER BY acc.reference, f.date
+            """
+        raw = pd.read_sql(text(sql), _engine, params={"sp": sp_id, "as_of": as_of})
 
-    # Show override selector BEFORE Generate Report
-    st.markdown("### اختر العمليات خزينة الخصومات:")
+    buckets = [f"{grace + 1}-{grace + length}", f"{grace + length + 1}-{grace + 2 * length}",
+               f"{grace + 2 * length + 1}-{grace + 3 * length}", f">{grace + 3 * length}"]
+    overdue_buckets = buckets
+    summary_rows = []
+    invoice_data = []
 
-    # Re‑compute the available labels so we know how many there *should* be
-    labels = []
-    if raw is not None and not raw.empty:
-        tmp = raw.copy()
-        tmp['date'] = pd.to_datetime(tmp['date'], errors='coerce')
-        mask = (
-                (tmp['plantid'] == 56)  &
-                (tmp['date'] > pd.to_datetime(start_date))
-        )
-        subset = tmp.loc[mask]
-        labels = [
-            f"{r['functionid']}|{r['recordid']}|{r['date'].date()}|{r['amount']}|{r['reference']} |{r['description']}"
-            for _, r in subset.iterrows()
-        ]
+    for acc, grp in raw.groupby("accountid"):
+        code = grp["code"].iat[0]
+        name = grp["name"].iat[0]
+        sp_id = grp["spid"].iat[0]
+        sp_name = grp["sp_name"].iat[0]
+        cash_debits = []
+        cash_credits = []
+        gold_debits = []
+        gold_credits = []
 
-    # Let the user pick from exactly those labels
-    overrides = st.multiselect(
-        "",
-        options=labels,
-        format_func=lambda x: f"Reference: {x.split('|')[4]} – Date: {x.split('|')[2]} – Amount: {x.split('|')[3]} - Description:{x.split('|')[5]}",
-        key="overrides_pre_generate"
+        for _, r in grp.iterrows():
+            dt = pd.to_datetime(r["date"])
+            amt = r["amount"]
+            invoiceref = r["invoiceref"]
+            if r["currencyid"] == 1:
+                if amt > 0:
+                    cash_debits.append({
+                        "date": dt,
+                        "remaining": amt,
+                        "paid_date": None,
+                        "original_amount": amt,
+                        "invoiceref": invoiceref
+                    })
+                else:
+                    cash_credits.append({"date": dt, "amount": abs(amt)})
+            else:
+                grams = convert_gold(r["currencyid"], amt)
+                if amt > 0:
+                    gold_debits.append({
+                        "date": dt,
+                        "remaining": grams,
+                        "paid_date": None,
+                        "original_amount": grams,
+                        "invoiceref": invoiceref
+                    })
+                else:
+                    gold_credits.append({"date": dt, "amount": abs(grams)})
+
+        pc, net_cash = process_fifo(cash_debits, cash_credits, pd.to_datetime(as_of))
+        pg, net_gold = process_fifo(gold_debits, gold_credits, pd.to_datetime(as_of))
+
+        total_cash_due = net_cash
+        total_gold_due = net_gold
+        sums = {f"cash_{b}": 0.0 for b in buckets}
+        sums.update({f"gold_{b}": 0.0 for b in buckets})
+
+        invoice_overdues = {}
+        for d in pc:
+            if d["remaining"] > 0:
+                days = ((d.get("paid_date") or pd.to_datetime(as_of)) - d["date"]).days
+                bucket = bucketize(days, grace, length)
+                if bucket:
+                    sums[f"cash_{bucket}"] += d["remaining"]
+                    inv_ref = d["invoiceref"]
+                    if inv_ref not in invoice_overdues:
+                        invoice_overdues[inv_ref] = {
+                            "Customer Reference": code,
+                            "Customer Name": name,
+                            "Invoice Ref": inv_ref,
+                            "Invoice Date": d["date"].date(),
+                            "Overdue G21": 0.0,
+                            "Overdue EGP": 0.0,
+                            "Delay Days": max(0, days - grace)
+                        }
+                    invoice_overdues[inv_ref]["Overdue EGP"] += d["remaining"]
+
+        for d in pg:
+            if d["remaining"] > 0:
+                days = ((d.get("paid_date") or pd.to_datetime(as_of)) - d["date"]).days
+                bucket = bucketize(days, grace, length)
+                if bucket:
+                    sums[f"gold_{bucket}"] += d["remaining"]
+                    inv_ref = d["invoiceref"]
+                    if inv_ref not in invoice_overdues:
+                        invoice_overdues[inv_ref] = {
+                            "Customer Reference": code,
+                            "Customer Name": name,
+                            "Invoice Ref": inv_ref,
+                            "Invoice Date": d["date"].date(),
+                            "Overdue G21": 0.0,
+                            "Overdue EGP": 0.0,
+                            "Delay Days": max(0, days - grace)
+                        }
+                    invoice_overdues[inv_ref]["Overdue G21"] += d["remaining"]
+
+        invoice_data.extend(invoice_overdues.values())
+
+        cash_total = sum(sums[f"cash_{b}"] for b in overdue_buckets)
+        gold_total = sum(sums[f"gold_{b}"] for b in overdue_buckets)
+        if cash_total > 0 or gold_total > 0:  # Only include customers with overdue balances
+            summary_rows.append({
+                "AccountID": acc,
+                "Customer": name,
+                "Code": code,
+                "sp_id": sp_id,
+                "sp_name": sp_name,
+                "cash_total": cash_total,
+                "gold_total": gold_total,
+                "total_cash_due": total_cash_due,
+                "total_gold_due": total_gold_due,
+                **sums
+            })
+
+    summary_df = pd.DataFrame(summary_rows)
+    for b in buckets:
+        for pfx in ("cash_", "gold_"):
+            col = pfx + b
+            if col not in summary_df:
+                summary_df[col] = 0.0
+
+    detail_df = pd.DataFrame(invoice_data)
+    return summary_df, buckets, detail_df
+
+# ----------------- PDF Functions -----------------
+def load_arabic_font(pdf):
+    FONT_PATH = r"D:\FinalCode-main\FinalCode-main\dejavu-sans\DejaVuSans.ttf"
+    if os.path.exists(FONT_PATH):
+        pdf.add_font("DejaVu", "", FONT_PATH, uni=True)
+        pdf.set_font("DejaVu", "", 11)
+    else:
+        raise FileNotFoundError(f"Missing Arabic font at {FONT_PATH}")
+
+def truncate_text(pdf, text, width):
+    ellipsis = "..."
+    while pdf.get_string_width(ellipsis + text) > width and len(text) > 0:
+        text = text[1:]
+    if pdf.get_string_width(ellipsis + text) <= width:
+        text = ellipsis + text
+    return text
+
+def draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w):
+    pdf.cell(name_w, 8, reshape_text("Name"), border=1, align="C", ln=0)
+    pdf.cell(bal_w, 8, reshape_text("Balance"), border=1, align="C", ln=0)
+    for b in buckets:
+        pdf.cell(bucket_w, 8, reshape_text(f"From {b.replace('-', ' - ')}"), border=1, align="C", ln=0)
+    pdf.cell(tot_w, 8, reshape_text("Total Delay"), border=1, align="C", ln=1)
+    pdf.cell(name_w, 8, "", border=1, ln=0)
+    pdf.cell(sub_w, 8, "G21", border=1, align="C", ln=0)
+    pdf.cell(sub_w, 8, "EGP", border=1, align="C", ln=0)
+    for _ in buckets:
+        pdf.cell(sub_w, 8, "G21", border=1, align="C", ln=0)
+        pdf.cell(sub_w, 8, "EGP", border=1, align="C", ln=0)
+    pdf.cell(sub_w, 8, "G21", border=1, align="C", ln=0)
+    pdf.cell(sub_w, 8, "EGP", border=1, align="C", ln=1)
+
+def draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length, table_width, col_widths):
+    parameters = [
+        ("المندوب", sp_name),
+        ("العميل", selected_customer),
+        ("تاريخ الاستحقاق", as_of.strftime('%d/%m/%Y')),
+        ("فترة السماحية", f"{grace} يوم"),
+        ("مدة الفترة", f"{length} يوم")
+    ]
+    pdf.set_fill_color(200, 200, 200)
+    pdf.cell(col_widths[0], 8, reshape_text("المعامل"), border=1, align="C", fill=True, ln=0)
+    pdf.cell(col_widths[1], 8, reshape_text("القيمة"), border=1, align="C", fill=True, ln=1)
+    for label, value in parameters:
+        pdf.cell(col_widths[0], 8, reshape_text(label), border=1, align="R", ln=0)
+        pdf.cell(col_widths[1], 8, reshape_text(value), border=1, align="R", ln=1)
+
+def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, length):
+    pdf = FPDF(orientation="L", unit="mm", format="A3")
+    pdf.add_page()
+    load_arabic_font(pdf)
+
+    exe = datetime.now().strftime("%d/%m/%Y %I:%M %p")
+    pdf.set_xy(10, 10)
+    pdf.cell(0, 5, reshape_text("New Egypt Gold | تقرير متأخرات"), ln=0, align="c")
+    pdf.ln(5)
+    pdf.cell(0, 5, f"Execution Date: {exe}", ln=0, align="L")
+    pdf.ln(10)
+
+    table_width = 120
+    col_widths = [40, 80]
+    pdf.set_xy(10, pdf.get_y())
+    draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length, table_width, col_widths)
+    pdf.ln(10)
+
+    name_w = 50
+    bal_w = 60
+    bucket_w = 60
+    tot_w = 60
+    sub_w = bal_w / 2
+    line_h = 7
+    bottom_margin = 20
+
+    if sp_name == "All":
+        grouped = df.groupby("sp_id")
+    else:
+        grouped = [(sp_name, df)]
+
+    for sp_id, group in grouped:
+        sp_display_name = group["sp_name"].iloc[0] if sp_name == "All" else sp_name
+        pdf.set_xy(10, pdf.get_y())
+        pdf.cell(0, 5, reshape_text(f"Sales Person: {sp_display_name}"), border=0, ln=1, align="L")
+        pdf.ln(4)
+        draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w)
+
+        for _, r in group.iterrows():
+            row_h = line_h
+            g21_h = pdf.multi_cell(sub_w, line_h, format_number(r["total_gold_due"]), border=0, align="R", dry_run=True)
+            row_h = max(row_h, g21_h)
+            egp_h = pdf.multi_cell(sub_w, line_h, format_number(r["total_cash_due"]), border=0, align="R", dry_run=True)
+            row_h = max(row_h, egp_h)
+            for b in buckets:
+                gold_h = pdf.multi_cell(sub_w, line_h, format_number(r[f"gold_{b}"]), border=0, align="R", dry_run=True)
+                cash_h = pdf.multi_cell(sub_w, line_h, format_number(r[f"cash_{b}"]), border=0, align="R", dry_run=True)
+                row_h = max(row_h, gold_h, cash_h)
+            tot_g21_h = pdf.multi_cell(sub_w, line_h, format_number(r["gold_total"]), border=0, align="R", dry_run=True)
+            tot_egp_h = pdf.multi_cell(sub_w, line_h, format_number(r["cash_total"]), border=0, align="R", dry_run=True)
+            row_h = max(row_h, tot_g21_h, tot_egp_h)
+
+            if pdf.get_y() + row_h + bottom_margin > pdf.h:
+                pdf.add_page()
+                load_arabic_font(pdf)
+                pdf.cell(0, 5, reshape_text(f"Sales Person: {sp_display_name}"), border=0, ln=1, align="L")
+                pdf.ln(4)
+                draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w)
+
+            x0, y0 = pdf.get_x(), pdf.get_y()
+            heights = []
+            customer_name = reshape_text(r["Customer"])
+            if pdf.get_string_width(customer_name) > name_w - 2:
+                customer_name = truncate_text(pdf, customer_name, name_w - 2)
+            pdf.cell(name_w, line_h, customer_name, border=1, align="L", ln=0)
+            heights.append(line_h)
+
+            pdf.set_xy(x0 + name_w, y0)
+            color = (0, 128, 0) if r["total_gold_due"] <= 0 else (0, 0, 255)
+            pdf.set_text_color(*color)
+            pdf.multi_cell(sub_w, line_h, format_number(r["total_gold_due"]), border=1, align="R")
+            heights.append(pdf.get_y() - y0)
+
+            pdf.set_xy(x0 + name_w + sub_w, y0)
+            color = (0, 128, 0) if r["total_cash_due"] <= 0 else (255, 0, 0)
+            pdf.set_text_color(*color)
+            pdf.multi_cell(sub_w, line_h, format_number(r["total_cash_due"]), border=1, align="R")
+            heights.append(pdf.get_y() - y0)
+            pdf.set_text_color(0, 0, 0)
+
+            x_b = x0 + name_w + bal_w
+            for i, b in enumerate(buckets):
+                pdf.set_xy(x_b + i * bucket_w, y0)
+                pdf.multi_cell(sub_w, line_h, format_number(r[f"gold_{b}"]), border=1, align="R")
+                heights.append(pdf.get_y() - y0)
+                pdf.set_xy(x_b + i * bucket_w + sub_w, y0)
+                pdf.multi_cell(sub_w, line_h, format_number(r[f"cash_{b}"]), border=1, align="R")
+                heights.append(pdf.get_y() - y0)
+
+            x_t = x_b + len(buckets) * bucket_w
+            pdf.set_xy(x_t, y0)
+            pdf.multi_cell(sub_w, line_h, format_number(r["gold_total"]), border=1, align="R")
+            heights.append(pdf.get_y() - y0)
+            pdf.set_xy(x_t + sub_w, y0)
+            pdf.multi_cell(sub_w, line_h, format_number(r["cash_total"]), border=1, align="R")
+            heights.append(pdf.get_y() - y0)
+
+            row_h = max(heights)
+            pdf.set_xy(x0, y0 + row_h)
+
+        pdf.ln(10)
+
+    out = pdf.output(dest="S")
+    return bytes(out) if isinstance(out, bytearray) else out
+
+def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer, grace, length):
+    try:
+        pdf = FPDF(orientation="P", unit="mm", format="A4")
+        pdf.add_page()
+
+        font_path = r"D:\FinalCode-main\FinalCode-main\dejavu-sans\DejaVuSans.ttf"
+        if os.path.exists(font_path):
+            pdf.add_font("DejaVu", "", font_path, uni=True)
+            pdf.set_font("DejaVu", "", 11)
+        else:
+            st.warning(f"Font file not found at {font_path}. Using Arial (may not support Arabic).")
+            pdf.set_font("Arial", "", 11)
+
+        execution_date = datetime.now().strftime("%d/%m/%Y %H:%M %p")
+        pdf.set_xy(10, 10)
+        pdf.cell(0, 5, reshape_text(f"New Egypt Gold | تقرير تفصيلي للمتأخرات"), border=0, ln=0, align="R")
+        pdf.cell(-50, 5, f"ITS-08223 / EGS", border=0, ln=0, align="R")
+        pdf.ln(5)
+        pdf.cell(0, 5, f"Execution Date: {execution_date}", border=0, ln=0, align="L")
+        pdf.cell(-50, 5, f"Page Number: 1/1", border=0, ln=0, align="R")
+        pdf.ln(10)
+
+        table_width = 120
+        col_widths = [40, 80]
+        pdf.set_xy(10, pdf.get_y())
+        draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length, table_width, col_widths)
+        pdf.ln(10)
+
+        pdf.set_fill_color(200, 200, 200)
+        pdf.cell(0, 8, reshape_text("Customer Delays By Custom Range."), border=1, ln=1, align="C", fill=True)
+        pdf.cell(30, 5, reshape_text("Due Date:"), border=0, ln=0, align="L")
+        pdf.cell(30, 5, as_of.strftime("%d/%m/%Y"), border=0, ln=0, align="L")
+        pdf.ln(5)
+
+        customers = set(summary_df["Customer"])
+        for customer in sorted(customers):
+            group = detail_df[detail_df["Customer Name"] == customer]
+            if not group.empty:  # Only include customers with overdue invoices
+                customer_summary = summary_df[summary_df["Customer"] == customer]
+                total_cash_due = customer_summary["total_cash_due"].iloc[0] if not customer_summary.empty else 0.0
+                total_gold_due = customer_summary["total_gold_due"].iloc[0] if not customer_summary.empty else 0.0
+                total_cash_overdue = customer_summary["cash_total"].iloc[0] if not customer_summary.empty else 0.0
+                total_gold_overdue = customer_summary["gold_total"].iloc[0] if not customer_summary.empty else 0.0
+
+                pdf.set_xy(10, pdf.get_y())
+                pdf.multi_cell(0, 5, reshape_text(f"العميل: {customer}"), border=0, align="R")
+                pdf.set_xy(10, pdf.get_y())
+                pdf.set_text_color(0, 128, 0) if total_cash_due <= 0 else pdf.set_text_color(255, 0, 0)
+                pdf.cell(0, 5, reshape_text(f"إجمالي المديونية النقدية: {format_number(total_cash_due)}"), border=0, ln=1, align="R")
+                pdf.set_text_color(0, 128, 0) if total_gold_due <= 0 else pdf.set_text_color(0, 0, 255)
+                pdf.cell(0, 5, reshape_text(f"إجمالي المديونية الذهبية: {format_number(total_gold_due)}"), border=0, ln=1, align="R")
+                pdf.set_text_color(0, 0, 0)
+                pdf.cell(0, 5, reshape_text(f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}"), border=0, ln=1, align="R")
+                pdf.cell(0, 5, reshape_text(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)}"), border=0, ln=1, align="R")
+                pdf.ln(4)
+
+                headers = ["رقم الفاتورة", "تاريخ الفاتورة", "المتأخرة G21", "المتأخرة EGP", "عدد أيام التأخير"]
+                widths = [40, 40, 30, 30, 30]
+                for w, h in zip(widths, headers):
+                    pdf.cell(w, 8, reshape_text(h), border=1, ln=0, align="C")
+                pdf.ln()
+                for _, row in group.iterrows():
+                    pdf.cell(40, 10, reshape_text(row["Invoice Ref"]), border=1, align="C", ln=0)
+                    pdf.cell(40, 10, str(row["Invoice Date"]), border=1, align="C", ln=0)
+                    pdf.cell(30, 10, format_number(row["Overdue G21"]), border=1, align="R", ln=0)
+                    pdf.cell(30, 10, format_number(row["Overdue EGP"]), border=1, align="R", ln=0)
+                    pdf.cell(30, 10, str(row["Delay Days"]), border=1, align="R", ln=1)
+                pdf.ln(4)
+
+        out = pdf.output(dest="S")
+        return bytes(out) if isinstance(out, bytearray) else out
+    except Exception as e:
+        st.error(f"Error generating detailed PDF: {str(e)}")
+        return None
+
+# ----------------- Chart Functions -----------------
+def setup_arabic_font():
+    font_path = r"D:\FinalCode-main\FinalCode-main\dejavu-sans\DejaVuSans.ttf"
+    if os.path.exists(font_path):
+        prop = fm.FontProperties(fname=font_path)
+        plt.rc('font', family='DejaVu Sans')
+        return prop
+    else:
+        st.warning("Arabic font not found. Using default font (may not support Arabic).")
+        return None
+
+def create_pie_chart(summary_df, buckets, type="cash"):
+    total_overdues = {b: summary_df[f"{type}_{b}"].sum() for b in buckets}
+    total = sum(total_overdues.values())
+    if total == 0:
+        return None
+
+    sizes = [total_overdues[b] for b in buckets]
+    outer_labels = [reshape_text(f"الفترة: {b}") for b in buckets]
+    prop = setup_arabic_font()
+    plt.figure(figsize=(8, 4))
+    wedges, texts, autotexts = plt.pie(
+        sizes,
+        labels=outer_labels,
+        startangle=140,
+        labeldistance=1.1,
+        pctdistance=0.65,
+        autopct=lambda pct: reshape_text(f"{format_number(pct * total / 100)}\n{pct:.1f}%"),
+        textprops={'fontproperties': prop, 'fontsize': 8},
     )
+    for txt in autotexts:
+        txt.set_color('white')
+        txt.set_fontproperties(prop)
+        txt.set_fontsize(9)
+    title = "توزيع التأخيرات حسب الفترة " + ("(كاش)" if type == "cash" else "(ذهب)")
+    plt.title(reshape_text(title), fontproperties=prop)
+    buf = BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight")
+    plt.close()
+    buf.seek(0)
+    return buf
 
-    # If there’s more than one candidate, require ALL of them
-    if len(labels) > 0 and len(overrides) != len(labels):
-        st.error(f"⛔ يجب اختيار جميع العمليات ({len(labels)}) قبل عمل Generate.")
-        # disable the rest of the logic
+def create_bar_chart(summary_df, buckets, type="cash"):
+    df = summary_df.copy()
+    df["total_overdue"] = df[f"{type}_total"]
+    top_10 = df.nlargest(10, "total_overdue")
+    if top_10["total_overdue"].sum() == 0:
+        return None
+
+    customers = top_10["Customer"]
+    overdues = top_10["total_overdue"]
+    labels = [reshape_text(c) for c in customers]
+    prop = setup_arabic_font()
+    plt.figure(figsize=(12, 6))
+    bars = plt.bar(range(len(labels)), overdues, tick_label=labels)
+    for bar in bars:
+        y = bar.get_height()
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            y + 0.02 * overdues.max(),
+            format_number(y),
+            ha='center', va='bottom',
+            fontproperties=prop,
+            fontsize=9,
+        )
+    title = f"أعلى 10 عملاء بالمتأخرات ({'كاش' if type == 'cash' else 'ذهب'})"
+    plt.title(reshape_text(title), fontproperties=prop, fontsize=11)
+    plt.xticks(rotation=45, ha="right", fontproperties=prop, fontsize=9)
+    plt.yticks([])
+    plt.ylabel("")
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.35, left=0.1)
+    buf = BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight")
+    plt.close()
+    buf.seek(0)
+    return buf
+
+# ----------------- Streamlit App -----------------
+def main():
+    st.set_page_config(page_title="Aging Report", layout="wide")
+    st.title("📊 تقرير متأخرات العملاء حسب Sales Person")
+
+    engine, err = create_db_engine()
+    if err:
+        st.error("خطأ في الاتصال: " + err)
         return
 
-    if st.sidebar.button("Generate Report"):
-        if selected_customer == "Select Customer...":
-            st.error("الرجاء اختيار عميل.")
-            return
-        if raw is None or raw.empty:
-            st.warning("لا توجد معاملات للعميل المحدد.")
-            return
+    sps = get_salespersons(engine)
+    sp_options = ["All"] + sps["name"].tolist()
+    sel = st.sidebar.selectbox("Sales Person", sp_options)
+    if sel == "---":
+        st.info("اختر Sales Person")
+        return
 
-        start_time = time.time()  # Start measuring time
-        discounts = {50: discount_50, 47: discount_47, 61: discount_61, 62: discount_62, 48: discount_48}
-        extras = {
-            50: discount_45,
-            61: discount_45,
-            47: discount_46,
-            62: discount_46
-        }
+    sp_id = None if sel == "All" else (int(sps.loc[sps["name"] == sel, "recordid"].iloc[0]))
+    customers = get_customers(engine, sp_id)
+    customer_options = ["الكل"] + customers["name"].tolist()
+    selected_customer = st.sidebar.selectbox("Customer Name", customer_options)
 
-        # Apply overrides using the selected transactions
-        raw2 = raw.copy()
-        raw2['date'] = pd.to_datetime(raw2['date'], errors='coerce')
+    as_of = st.sidebar.date_input("Due Date", date.today())
+    grace = st.sidebar.number_input("Grace Period", 0, 100, 30)
+    length = st.sidebar.number_input("Period Length", 1, 365, 15)
+    report_type = st.sidebar.selectbox("Report Type", ["Summary Report", "Details Report"])
 
-        # 2) حذف كل plantid=56 من نوع Debit (amount > 0)
-        mask_debits_56 = (raw2['plantid'] == 56) & (raw2['amount'] > 0)
-        raw2 = raw2.loc[~mask_debits_56].copy()
-
-        # 3) (اختياري) لو عندك Overrides تطبيقهم بعد الحذف
-        for label in overrides:
-            fid, rid, *_ = label.split('|')
-            raw2.loc[
-                (raw2['functionid'] == int(fid)) & (raw2['recordid'] == int(rid)),
-                'date'
-            ] = pd.to_datetime(start_date)
-
-        # Process transactions
-        txs = process_transactions(raw2, discounts, extras, pd.to_datetime(start_date))
-        if txs.empty:
-            st.warning("لا توجد معاملات بعد المعالجة.")
+    if st.sidebar.button("Generate"):
+        summary_df, buckets, detail_df = get_overdues(engine, sp_id, as_of, grace, length)
+        if summary_df.empty:
+            st.warning("لا توجد متأخرات أو أرصدة لهذا المندوب.")
             return
 
-        # Generate Aggregated Aging Report
-        report = calculate_aging_reports(txs)
-        # Filter report for transactions with date >= 01/01/2023
-        report = report[pd.to_datetime(report['date']) >= pd.to_datetime("2023-01-01")]
-        report['date_dt'] = pd.to_datetime(report['date'])
-        report = report[(report['date_dt'] >= pd.to_datetime(start_date)) & (report['date_dt'] <= pd.to_datetime(end_date))]
-        report = report.sort_values(by=['date_dt', 'paid_date_cash', 'paid_date_gold'],
-                                    ascending=[True, True, True]).reset_index(drop=True)
-        report = report.drop(columns=['date_dt'])
-        # Format amounts with two decimals and thousands separator
-        for col in ['amount_cash', 'remaining_cash', 'amount_gold', 'remaining_gold']:
-            report[col] = report[col].apply(lambda x: f"{x:,.2f}")
+        if selected_customer != "الكل":
+            summary_df = summary_df[summary_df["Customer"] == selected_customer]
+            detail_df = detail_df[detail_df["Customer Name"] == selected_customer]
 
-        end_time = time.time()
-        duration = end_time - start_time
-        log_report_generation(st.session_state.user_id, duration)
+        if summary_df.empty:
+            st.warning("لا توجد متأخرات أو أرصدة لهذا العميل.")
+            return
 
-        def highlight_row(row):
-            styles = [''] * len(row)
-            try:
-                cash = int(row['aging_days_cash']) if row['aging_days_cash'] != '-' else 0
-                gold = int(row['aging_days_gold']) if row['aging_days_gold'] != '-' else 0
-            except:
-                cash = gold = 0
-            if cash > aging_threshold and gold > aging_threshold:
-                styles = ['background-color: #FFCCCB'] * len(row)
-            else:
-                if cash > aging_threshold:
-                    idx = row.index.get_loc('aging_days_cash')
-                    styles[idx] = 'background-color: #FFCCCB'
-                if gold > aging_threshold:
-                    idx = row.index.get_loc('aging_days_gold')
-                    styles[idx] = 'background-color: #FFCCCB'
-            return styles
+        st.subheader(f"المتأخرات حتى {as_of} (بعد فترة السماحية {grace} يوم)")
 
-        styled_report = report.style.apply(highlight_row, axis=1)
-        st.subheader("Aging Report")
-        st.dataframe(styled_report, use_container_width=True)
+        overdue_buckets = buckets
+        cash_grand_total = sum(summary_df[f"cash_{b}"].sum() for b in overdue_buckets)
+        gold_grand_total = sum(summary_df[f"gold_{b}"].sum() for b in overdue_buckets)
+        total_cash_due = summary_df["total_cash_due"].sum()
+        total_gold_due = summary_df["total_gold_due"].sum()
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Cash Balance", f"{format_number(total_cash_due)} EGP",
+                      delta_color="normal" if total_cash_due > 0 else "inverse")
         with col2:
-            # Prepare PDF export
-            report_params = {
-                "اسم العميل": reshape_text(selected_customer),
-                "تاريخ البداية": str(start_date),
-                "تاريخ النهاية": str(end_date),
-                "فترة سداد العميل": aging_threshold,
-                "احجار عيار 21": discount_50,
-                #"":                "",
-                "سادة عيار 21": discount_61,
-                "ذهب مشغول عيار 18": discount_47,
-                "سادة عيار 18": discount_62,
-                "ستار 18": discount_48,
-                "تعجيل دفع عيار 21": discount_45,
-                "تعجيل دفع عيار 18": discount_46
-            }
-            pdf_bytes = export_pdf(report, report_params)
-            if pdf_bytes:
-                st.download_button(
-                    label="⬇️ Download Report",
-                    data=pdf_bytes,
-                    file_name="تقرير_الخصومات.pdf",
-                    mime="application/pdf"
-                )
+            st.metric("Total Cash Delays", f"{format_number(cash_grand_total)} EGP")
+        with col3:
+            st.metric("Total Gold Balance", f"{format_number(total_gold_due)} G21",
+                      delta_color="normal" if total_gold_due > 0 else "inverse")
+        with col4:
+            st.metric("Total Gold Delays", f"{format_number(gold_grand_total)} G21")
 
-        # Detailed Installments Search by Reference
-        st.markdown("---")
-        st.subheader("تفاصيل سداد فاتورة معينة")
+        # Display Charts
+        st.subheader("تحليل المتأخرات")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**توزيع التأخيرات حسب الفترة (كاش)**")
+            pie_chart_cash = create_pie_chart(summary_df, buckets, type="cash")
+            if pie_chart_cash:
+                st.image(pie_chart_cash)
+            st.markdown("**توزيع التأخيرات حسب الفترة (ذهب)**")
+            pie_chart_gold = create_pie_chart(summary_df, buckets, type="gold")
+            if pie_chart_gold:
+                st.image(pie_chart_gold)
+        with col2:
+            st.markdown("**أعلى 10 عملاء بالمتأخرات (كاش)**")
+            bar_chart_cash = create_bar_chart(summary_df, buckets, type="cash")
+            if bar_chart_cash:
+                st.image(bar_chart_cash)
+            st.markdown("**أعلى 10 عملاء بالمتأخرات (ذهب)**")
+            bar_chart_gold = create_bar_chart(summary_df, buckets, type="gold")
+            if bar_chart_gold:
+                st.image(bar_chart_gold)
 
-        # Build detailed FIFO events for installments
-        cash_debits, cash_credits, gold_debits, gold_credits = [], [], [], []
-        fioba = fetch_data(
-            "SELECT fiscalYear, currencyid, amount FROM fioba WHERE fiscalYear = 2023 AND accountId = :acc",
-            {"acc": cid}
-        )
-        if fioba is not None and not fioba.empty:
-            for _, r in fioba.iterrows():
-                entry_date = pd.to_datetime(f"{int(r['fiscalYear'])}-01-01")
-                conv = r['amount']
-                if r['currencyid'] != 1:
-                    conv = convert_gold({'reference': '', 'amount': r['amount'], 'currencyid': r['currencyid']})
-                entry = {
-                    'date': entry_date,
-                    'reference': 'Opening-Balance-2023',
-                    'currencyid': r['currencyid'],
-                    'amount': abs(conv),
-                    'remaining': abs(conv)
-                }
-                if entry_date >= pd.to_datetime("2023-01-01"):
-                    if conv >= 0:
-                        if r['currencyid'] == 1:
-                            cash_debits.append(entry)
-                        else:
-                            gold_debits.append(entry)
-                    else:
-                        if r['currencyid'] == 1:
-                            cash_credits.append({'date': entry_date, 'amount': abs(conv)})
-                        else:
-                            gold_credits.append({'date': entry_date, 'amount': abs(conv)})
-        for _, r in txs.iterrows():
-            if r['date'] < pd.to_datetime("2023-01-01"):
-                continue
-            entry = {
-                'date': r['date'],
-                'reference': r['reference'],
-                'currencyid': r['currencyid'],
-                'amount': abs(r['converted']),
-                'remaining': abs(r['converted'])
+        if report_type == "Summary Report":
+            st.markdown("**المتأخرات**")
+            columns = ["Code", "Customer", "total_gold_due", "total_cash_due"]
+            for b in buckets:
+                columns.append(f"gold_{b}")
+                columns.append(f"cash_{b}")
+            columns.extend(["gold_total", "cash_total"])
+
+            display_df = summary_df[columns].copy()
+            display_df["total_gold_due"] = display_df["total_gold_due"].apply(format_number)
+            display_df["total_cash_due"] = display_df["total_cash_due"].apply(format_number)
+            display_df["gold_total"] = display_df["gold_total"].apply(format_number)
+            display_df["cash_total"] = display_df["cash_total"].apply(format_number)
+            for b in buckets:
+                display_df[f"gold_{b}"] = display_df[f"gold_{b}"].apply(format_number)
+                display_df[f"cash_{b}"] = display_df[f"cash_{b}"].apply(format_number)
+
+            column_mapping = {
+                "Code": "Customer Ref",
+                "Customer": "Customer Name",
+                "total_gold_due": "Total G21 Balance",
+                "total_cash_due": "Total EGP Balance",
+                "gold_total": "Total G21 Delay",
+                "cash_total": "Total EGP Delay"
             }
-            if r['amount'] > 0:
-                if r['currencyid'] == 1:
-                    cash_debits.append(entry)
-                else:
-                    gold_debits.append(entry)
+            for b in buckets:
+                display_label = f"من {b.replace('-', ' إلى ').replace('>', 'أكبر من ')} يوم"
+                column_mapping[f"gold_{b}"] = f"{display_label} G21"
+                column_mapping[f"cash_{b}"] = f"{display_label} EGP"
+
+            def highlight_negatives(s):
+                if s.name in ["Total G21 Balance", "Total EGP Balance"]:
+                    return ['background-color: red' if v.startswith('(') else '' for v in s]
+                return [''] * len(s)
+
+            st.dataframe(
+                display_df.rename(columns=column_mapping).style.apply(highlight_negatives, axis=0),
+                use_container_width=True
+            )
+
+            pdf = build_summary_pdf(summary_df, sel, as_of, buckets, selected_customer, grace, length)
+            filename = f"summary_overdues_{sel}_{as_of}.pdf"
+
+        else:
+            st.subheader("تفاصيل متأخرات العملاء")
+            customers = set(summary_df["Customer"])
+            if customers:
+                st.markdown("**تفاصيل الفواتير المتأخرة (بعد فترة السماحية)**")
+                for customer in sorted(customers):
+                    group = detail_df[detail_df["Customer Name"] == customer]
+                    if not group.empty:  # Only include customers with overdue invoices
+                        customer_summary = summary_df[summary_df["Customer"] == customer]
+                        total_cash_due = customer_summary["total_cash_due"].iloc[0] if not customer_summary.empty else 0.0
+                        total_gold_due = customer_summary["total_gold_due"].iloc[0] if not customer_summary.empty else 0.0
+                        total_cash_overdue = customer_summary["cash_total"].iloc[0] if not customer_summary.empty else 0.0
+                        total_gold_overdue = customer_summary["gold_total"].iloc[0] if not customer_summary.empty else 0.0
+
+                        st.markdown(f"**العميل: {customer} (كود: {customer_summary['Code'].iloc[0] if not customer_summary.empty else '-'})**")
+                        color_cash = "green" if total_cash_due <= 0 else "red"
+                        color_gold = "green" if total_gold_due <= 0 else "blue"
+                        st.markdown(f"<span style='color: {color_gold};'>إجمالي المديونية الذهبية: {format_number(total_gold_due)}</span> | "
+                                    f"<span style='color: {color_cash};'>إجمالي المديونية النقدية: {format_number(total_cash_due)}</span>",
+                                    unsafe_allow_html=True)
+                        st.markdown(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)} | "
+                                    f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}",
+                                    unsafe_allow_html=True)
+
+                        display_group = group[["Invoice Ref", "Invoice Date", "Overdue G21", "Overdue EGP", "Delay Days"]].copy()
+                        display_group["Overdue G21"] = display_group["Overdue G21"].apply(format_number)
+                        display_group["Overdue EGP"] = display_group["Overdue EGP"].apply(format_number)
+                        st.dataframe(
+                            display_group.rename(columns={
+                                "Invoice Ref": "Invoice Ref",
+                                "Invoice Date": "Invoice Date",
+                                "Overdue G21": "G21 Delay",
+                                "Overdue EGP": "EGP Delay",
+                                "Delay Days": "Delay Days"
+                            }),
+                            use_container_width=True
+                        )
             else:
-                if r['currencyid'] == 1:
-                    cash_credits.append({'date': r['date'], 'amount': abs(r['converted'])})
-                else:
-                    gold_credits.append({'date': r['date'], 'amount': abs(r['converted'])})
-        cash_details = process_fifo_detailed(sorted(cash_debits, key=lambda x: x['date']),
-                                             sorted(cash_credits, key=lambda x: x['date']))
-        gold_details = process_fifo_detailed(sorted(gold_debits, key=lambda x: x['date']),
-                                             sorted(gold_credits, key=lambda x: x['date']))
-        cash_details_df = pd.DataFrame(cash_details)
-        gold_details_df = pd.DataFrame(gold_details)
+                st.warning("لا توجد فواتير متأخرة أو أرصدة.")
 
-        if not cash_details_df.empty:
-            cash_details_df['date'] = pd.to_datetime(cash_details_df['date'])
-            cash_details_df = cash_details_df[(cash_details_df['date'] >= pd.to_datetime(start_date)) &
-                                              (cash_details_df['date'] <= pd.to_datetime(end_date))]
-        if not gold_details_df.empty:
-            gold_details_df['date'] = pd.to_datetime(gold_details_df['date'])
-            gold_details_df = gold_details_df[(gold_details_df['date'] >= pd.to_datetime(start_date)) &
-                                              (gold_details_df['date'] <= pd.to_datetime(end_date))]
-        # Format amounts for display
-        if not cash_details_df.empty:
-            cash_details_df['Remaining %'] = cash_details_df.apply(
-                lambda r: (r['remaining'] / r['invoice_amount'] * 100) if r['invoice_amount'] != 0 else 0, axis=1
-            )
-            cash_details_df['invoice_amount'] = cash_details_df['invoice_amount'].apply(lambda x: f"{x:,.2f}")
-            cash_details_df['Payment'] = cash_details_df['Payment'].apply(lambda x: f"{x:,.2f}")
-            cash_details_df['remaining'] = cash_details_df['remaining'].apply(lambda x: f"{x:,.2f}")
-            cash_details_df['Remaining %'] = cash_details_df['Remaining %'].apply(lambda x: f"{x:,.2f}")
-        if not gold_details_df.empty:
-            gold_details_df['Remaining %'] = gold_details_df.apply(
-                lambda r: (r['remaining'] / r['invoice_amount'] * 100) if r['invoice_amount'] != 0 else 0, axis=1
-            )
-            gold_details_df['invoice_amount'] = gold_details_df['invoice_amount'].apply(lambda x: f"{x:,.2f}")
-            gold_details_df['Payment'] = gold_details_df['Payment'].apply(lambda x: f"{x:,.2f}")
-            gold_details_df['remaining'] = gold_details_df['remaining'].apply(lambda x: f"{x:,.2f}")
-            gold_details_df['Remaining %'] = gold_details_df['Remaining %'].apply(lambda x: f"{x:,.2f}")
-        if not cash_details_df.empty:
-            cash_details_df['Invoice Date'] = cash_details_df['date'].dt.strftime('%Y-%m-%d')
-            cash_details_df['Paid Date'] = cash_details_df['paid_date'].apply(
-                lambda d: d.strftime('%Y-%m-%d') if pd.notna(d) else "Unpaid")
-        if not gold_details_df.empty:
-            gold_details_df['Invoice Date'] = gold_details_df['date'].dt.strftime('%Y-%m-%d')
-            gold_details_df['Paid Date'] = gold_details_df['paid_date'].apply(
-                lambda d: d.strftime('%Y-%m-%d') if pd.notna(d) else "Unpaid")
-        st.markdown("### تفاصيل سداد الذهب")
-        if not gold_details_df.empty:
-            st.dataframe(gold_details_df[
-                             ['Invoice Date', 'reference', 'invoice_amount', 'Payment', 'remaining', 'Remaining %',
-                              'Paid Date', 'aging_days']
-                         ].reset_index(drop=True), use_container_width=True)
-        else:
-            st.info("لا توجد بيانات سداد ذهباً لهذه الفاتورة.")
-        st.markdown("### تفاصيل سداد النقدية")
-        if not cash_details_df.empty:
-            st.dataframe(cash_details_df[
-                             ['Invoice Date', 'reference', 'invoice_amount', 'Payment', 'remaining', 'Remaining %',
-                              'Paid Date', 'aging_days']
-                         ].reset_index(drop=True), use_container_width=True)
-        else:
-            st.info("لا توجد بيانات سداد نقداً لهذه الفاتورة.")
+            pdf = build_detailed_pdf(detail_df, summary_df, sel, as_of, selected_customer, grace, length)
+            filename = f"detailed_overdues_{sel}_{as_of}.pdf"
 
-# ----------------- Entry Point -----------------
+        if pdf and isinstance(pdf, bytes) and len(pdf) > 0:
+            st.download_button("⬇️ تحميل PDF", pdf, filename, "application/pdf")
+        else:
+            st.error("فشل في إنشاء ملف PDF. تحقق من مسار الخط أو البيانات.")
+
 if __name__ == "__main__":
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
-    if st.session_state.logged_in:
-        main_app()
-    else:
-        if login_form():
-            st.rerun()
+    main()
