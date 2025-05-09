@@ -271,7 +271,7 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
     summary_df = pd.DataFrame(summary_rows)
     detail_df = pd.DataFrame(invoice_data)
     if not detail_df.empty:
-    detail_df.sort_values(
+      detail_df.sort_values(
         by=["Invoice Date", "Invoice Ref"],
         key=lambda col: col.astype(str),   # نضمن أنها نصوص قابلة للفرز أبجدياً
         inplace=True
