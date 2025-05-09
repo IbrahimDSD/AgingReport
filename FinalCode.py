@@ -45,24 +45,25 @@ def convert_gold(cur, amt):
     
 PRIORITY_FIDS = {3001, 3100, 3108, 3113, 3104}
 def process_fifo(debits, credits, as_of, priority_fids=PRIORITY_FIDS):
-    # only credits up to as_of
+    # فلترنالكريدتس حسب التاريخ
     credits = [c for c in credits if c["date"] <= as_of]
 
-    # split debits into priority vs regular
+    # فرز الديبتس ذوي الأولوية أولاً، بناءً على (date, invoiceref)
     pri = deque(sorted(
         [d for d in debits if d["date"] <= as_of and d["functionid"] in priority_fids],
-        key=lambda x: x["date"]
+        key=lambda x: (x["date"], x["invoiceref"])
     ))
+    # ثم بقية الديبتس بنفس القاعدة
     reg = deque(sorted(
         [d for d in debits if d["date"] <= as_of and d["functionid"] not in priority_fids],
-        key=lambda x: x["date"]
+        key=lambda x: (x["date"], x["invoiceref"])
     ))
 
     excess = 0.0
-    # apply each credit
-    for cr in sorted(credits, key=lambda x: x["date"]):
+    for cr in sorted(credits, key=lambda x: (x["date"], x.get("invoiceref", ""))):
         rem = cr["amount"]
-        # drain priority first
+
+        # دَين الأولوية
         while rem > 0 and pri:
             d = pri[0]
             ap = min(rem, d["remaining"])
@@ -71,7 +72,8 @@ def process_fifo(debits, credits, as_of, priority_fids=PRIORITY_FIDS):
             if d["remaining"] <= 0:
                 d["paid_date"] = cr["date"]
                 pri.popleft()
-        # then regular
+
+        # بعد نفاد الأولوية ننتقل للعادي
         while rem > 0 and not pri and reg:
             d = reg[0]
             ap = min(rem, d["remaining"])
@@ -80,12 +82,14 @@ def process_fifo(debits, credits, as_of, priority_fids=PRIORITY_FIDS):
             if d["remaining"] <= 0:
                 d["paid_date"] = cr["date"]
                 reg.popleft()
+
         excess += rem
 
     remaining = list(pri) + list(reg)
     total_remaining = sum(d["remaining"] for d in remaining)
     net_balance = total_remaining - excess
     return remaining, net_balance
+
 
 def bucketize(days, grace, length):
     if days <= grace:
