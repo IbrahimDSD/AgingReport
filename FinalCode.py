@@ -162,7 +162,7 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
         params["sp"] = sp_id
     base_sql += " ORDER BY acc.reference, f.date"
 
-    raw = pd.read_sql(text(base_sql), engine, params=params)
+    raw = pd.read_sql(text(base_sql), _engine, params=params)
 
     buckets = [
         f"{grace + 1}-{grace + length}",
