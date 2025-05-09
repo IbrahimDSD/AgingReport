@@ -42,27 +42,50 @@ def convert_gold(cur, amt):
     if cur == 4:   return amt * 24.0 / 21.0
     if cur == 14:  return amt * 14.0 / 21.0
     return amt
-
-def process_fifo(debits, credits, as_of):
+    
+PRIORITY_FIDS = {3001, 3100, 3108, 3113, 3104}
+def process_fifo(debits, credits, as_of, priority_fids=PRIORITY_FIDS):
+    # only credits up to as_of
     credits = [c for c in credits if c["date"] <= as_of]
-    dq = deque(sorted(debits, key=lambda x: x["date"]))
-    excess = 0.0
 
+    # split debits into priority vs regular
+    pri = deque(sorted(
+        [d for d in debits if d["date"] <= as_of and d["functionid"] in priority_fids],
+        key=lambda x: x["date"]
+    ))
+    reg = deque(sorted(
+        [d for d in debits if d["date"] <= as_of and d["functionid"] not in priority_fids],
+        key=lambda x: x["date"]
+    ))
+
+    excess = 0.0
+    # apply each credit
     for cr in sorted(credits, key=lambda x: x["date"]):
         rem = cr["amount"]
-        while rem > 0 and dq:
-            d = dq[0]
+        # drain priority first
+        while rem > 0 and pri:
+            d = pri[0]
             ap = min(rem, d["remaining"])
             d["remaining"] -= ap
             rem -= ap
             if d["remaining"] <= 0:
                 d["paid_date"] = cr["date"]
-                dq.popleft()
+                pri.popleft()
+        # then regular
+        while rem > 0 and not pri and reg:
+            d = reg[0]
+            ap = min(rem, d["remaining"])
+            d["remaining"] -= ap
+            rem -= ap
+            if d["remaining"] <= 0:
+                d["paid_date"] = cr["date"]
+                reg.popleft()
         excess += rem
 
-    total_remaining = sum(d["remaining"] for d in dq)
+    remaining = list(pri) + list(reg)
+    total_remaining = sum(d["remaining"] for d in remaining)
     net_balance = total_remaining - excess
-    return dq, net_balance
+    return remaining, net_balance
 
 def bucketize(days, grace, length):
     if days <= grace:
@@ -116,44 +139,45 @@ def get_customers(_engine, sp_id):
 
 @st.cache_data(ttl=300)
 def get_overdues(_engine, sp_id, as_of, grace, length):
-    if sp_id is None:
-        sql = """
-            SELECT f.accountid, acc.reference AS code, acc.name AS name,
-                   f.currencyid, f.amount, f.date,
-                   COALESCE(f.reference, CAST(f.date AS VARCHAR)) AS invoiceref,
-                   acc.spid, COALESCE(sasp.name, 'غير محدد') AS sp_name
-            FROM fitrx f
-            JOIN fiacc acc ON f.accountid = acc.recordid
-            LEFT JOIN sasp ON acc.spid = sasp.recordid
-            WHERE acc.groupid = 1 AND f.date <= :as_of
-            ORDER BY acc.reference, f.date
-            """
-        raw = pd.read_sql(text(sql), _engine, params={"as_of": as_of})
-    else:
-        sql = """
-            SELECT f.accountid, acc.reference AS code, acc.name AS name,
-                   f.currencyid, f.amount, f.date,
-                   COALESCE(f.reference, CAST(f.date AS VARCHAR)) AS invoiceref,
-                   acc.spid, sasp.name AS sp_name
-            FROM fitrx f
-            JOIN fiacc acc ON f.accountid = acc.recordid
-            JOIN sasp ON acc.spid = sasp.recordid
-            WHERE acc.spid = :sp AND f.date <= :as_of
-            ORDER BY acc.reference, f.date
-            """
-        raw = pd.read_sql(text(sql), _engine, params={"sp": sp_id, "as_of": as_of})
+    # pull functionid in SQL
+    base_sql = """
+        SELECT f.accountid,
+               f.functionid,
+               acc.reference AS code,
+               acc.name AS name,
+               f.currencyid,
+               f.amount,
+               f.date,
+               COALESCE(f.reference, CAST(f.date AS VARCHAR)) AS invoiceref,
+               acc.spid,
+               COALESCE(sasp.name,'غير محدد') AS sp_name
+        FROM fitrx f
+        JOIN fiacc acc ON f.accountid = acc.recordid
+        LEFT JOIN sasp ON acc.spid = sasp.recordid
+        WHERE acc.groupid = 1 AND f.date <= :as_of
+    """
+    params = {"as_of": as_of}
+    if sp_id is not None:
+        base_sql += " AND acc.spid = :sp"
+        params["sp"] = sp_id
+    base_sql += " ORDER BY acc.reference, f.date"
 
-    buckets = [f"{grace + 1}-{grace + length}", f"{grace + length + 1}-{grace + 2 * length}",
-               f"{grace + 2 * length + 1}-{grace + 3 * length}", f">{grace + 3 * length}"]
-    overdue_buckets = buckets
+    raw = pd.read_sql(text(base_sql), engine, params=params)
+
+    buckets = [
+        f"{grace + 1}-{grace + length}",
+        f"{grace + length + 1}-{grace + 2 * length}",
+        f"{grace + 2 * length + 1}-{grace + 3 * length}",
+        f">{grace + 3 * length}"
+    ]
     summary_rows = []
     invoice_data = []
 
     for acc, grp in raw.groupby("accountid"):
         code = grp["code"].iat[0]
         name = grp["name"].iat[0]
-        sp_id = grp["spid"].iat[0]
         sp_name = grp["sp_name"].iat[0]
+
         cash_debits = []
         cash_credits = []
         gold_debits = []
@@ -163,6 +187,9 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
             dt = pd.to_datetime(r["date"])
             amt = r["amount"]
             invoiceref = r["invoiceref"]
+            fid = r["functionid"]
+
+            # cash
             if r["currencyid"] == 1:
                 if amt > 0:
                     cash_debits.append({
@@ -170,10 +197,12 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
                         "remaining": amt,
                         "paid_date": None,
                         "original_amount": amt,
-                        "invoiceref": invoiceref
+                        "invoiceref": invoiceref,
+                        "functionid": fid
                     })
                 else:
                     cash_credits.append({"date": dt, "amount": abs(amt)})
+            # gold
             else:
                 grams = convert_gold(r["currencyid"], amt)
                 if amt > 0:
@@ -182,89 +211,66 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
                         "remaining": grams,
                         "paid_date": None,
                         "original_amount": grams,
-                        "invoiceref": invoiceref
+                        "invoiceref": invoiceref,
+                        "functionid": fid
                     })
                 else:
                     gold_credits.append({"date": dt, "amount": abs(grams)})
 
+        # apply priority-aware FIFO
         pc, net_cash = process_fifo(cash_debits, cash_credits, pd.to_datetime(as_of))
         pg, net_gold = process_fifo(gold_debits, gold_credits, pd.to_datetime(as_of))
 
-        total_cash_due = net_cash
-        total_gold_due = net_gold
+        # bucket and build summary/detail rows
         sums = {f"cash_{b}": 0.0 for b in buckets}
         sums.update({f"gold_{b}": 0.0 for b in buckets})
+        inv_over = {}
 
-        invoice_overdues = {}
-        for d in pc:
-            if d["remaining"] > 0:
-                days = ((d.get("paid_date") or pd.to_datetime(as_of)) - d["date"]).days
-                bucket = bucketize(days, grace, length)
-                if bucket:
-                    sums[f"cash_{bucket}"] += d["remaining"]
-                    inv_ref = d["invoiceref"]
-                    if inv_ref not in invoice_overdues:
-                        invoice_overdues[inv_ref] = {
-                            "Customer Reference": code,
-                            "Customer Name": name,
-                            "Invoice Ref": inv_ref,
-                            "Invoice Date": d["date"].date(),
-                            "Overdue G21": 0.0,
-                            "Overdue EGP": 0.0,
-                            "Delay Days": max(0, days - grace)
-                        }
-                    invoice_overdues[inv_ref]["Overdue EGP"] += d["remaining"]
+        for drv, net, pfx in [(pc, net_cash, "cash"), (pg, net_gold, "gold")]:
+            for d in drv:
+                if d["remaining"] > 0:
+                    days = ((d.get("paid_date") or pd.to_datetime(as_of)) - d["date"]).days
+                    bucket = bucketize(days, grace, length)
+                    if bucket:
+                        sums[f"{pfx}_{bucket}"] += d["remaining"]
+                        ref = d["invoiceref"]
+                        if ref not in inv_over:
+                            inv_over[ref] = {
+                                "Customer Reference": code,
+                                "Customer Name": name,
+                                "Invoice Ref": ref,
+                                "Invoice Date": d["date"].date(),
+                                "Overdue G21": 0.0,
+                                "Overdue EGP": 0.0,
+                                "Delay Days": max(0, days - grace)
+                            }
+                        inv_over[ref][f"Overdue {'G21' if pfx=='gold' else 'EGP'}"] += d["remaining"]
 
-        for d in pg:
-            if d["remaining"] > 0:
-                days = ((d.get("paid_date") or pd.to_datetime(as_of)) - d["date"]).days
-                bucket = bucketize(days, grace, length)
-                if bucket:
-                    sums[f"gold_{bucket}"] += d["remaining"]
-                    inv_ref = d["invoiceref"]
-                    if inv_ref not in invoice_overdues:
-                        invoice_overdues[inv_ref] = {
-                            "Customer Reference": code,
-                            "Customer Name": name,
-                            "Invoice Ref": inv_ref,
-                            "Invoice Date": d["date"].date(),
-                            "Overdue G21": 0.0,
-                            "Overdue EGP": 0.0,
-                            "Delay Days": max(0, days - grace)
-                        }
-                    invoice_overdues[inv_ref]["Overdue G21"] += d["remaining"]
+        # add detail rows
+        invoice_data.extend(inv_over.values())
 
-        invoice_data.extend(invoice_overdues.values())
-
-        cash_total = sum(sums[f"cash_{b}"] for b in overdue_buckets)
-        gold_total = sum(sums[f"gold_{b}"] for b in overdue_buckets)
-        if cash_total > 0 or gold_total > 0:  # Only include customers with overdue balances
+        cash_total = sum(sums[f"cash_{b}"] for b in buckets)
+        gold_total = sum(sums[f"gold_{b}"] for b in buckets)
+        if cash_total > 0 or gold_total > 0:
             summary_rows.append({
                 "AccountID": acc,
                 "Customer": name,
                 "Code": code,
-                "sp_id": sp_id,
                 "sp_name": sp_name,
+                "total_cash_due": net_cash,
+                "total_gold_due": net_gold,
+                **sums,
                 "cash_total": cash_total,
-                "gold_total": gold_total,
-                "total_cash_due": total_cash_due,
-                "total_gold_due": total_gold_due,
-                **sums
+                "gold_total": gold_total
             })
 
     summary_df = pd.DataFrame(summary_rows)
-    for b in buckets:
-        for pfx in ("cash_", "gold_"):
-            col = pfx + b
-            if col not in summary_df:
-                summary_df[col] = 0.0
-
     detail_df = pd.DataFrame(invoice_data)
     return summary_df, buckets, detail_df
 
 # ----------------- PDF Functions -----------------
 def load_arabic_font(pdf):
-    FONT_PATH = r"D:\FinalCode-main\FinalCode-main\dejavu-sans\DejaVuSans.ttf"
+    FONT_PATH = r"DejaVuSans.ttf"
     if os.path.exists(FONT_PATH):
         pdf.add_font("DejaVu", "", FONT_PATH, uni=True)
         pdf.set_font("DejaVu", "", 11)
