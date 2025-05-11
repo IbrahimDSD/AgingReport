@@ -279,14 +279,6 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
     return summary_df, buckets, detail_df
 
 # ----------------- PDF Functions -----------------
-def load_arabic_font(pdf):
-    FONT_PATH = r"DejaVuSans.ttf"
-    if os.path.exists(FONT_PATH):
-        pdf.add_font("DejaVu", "", FONT_PATH, uni=True)
-        pdf.set_font("DejaVu", "", 11)
-    else:
-        raise FileNotFoundError(f"Missing Arabic font at {FONT_PATH}")
-
 def truncate_text(pdf, text, width):
     ellipsis = "..."
     while pdf.get_string_width(ellipsis + text) > width and len(text) > 0:
@@ -328,7 +320,8 @@ def draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length,
 def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, length):
     pdf = FPDF(orientation="L", unit="mm", format="A3")
     pdf.add_page()
-    load_arabic_font(pdf)
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+    pdf.set_font('DejaVu', '', 12)
 
     exe = datetime.now().strftime("%d/%m/%Y %I:%M %p")
     pdf.set_xy(10, 10)
@@ -379,7 +372,8 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
 
             if pdf.get_y() + row_h + bottom_margin > pdf.h:
                 pdf.add_page()
-                load_arabic_font(pdf)
+                pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+                pdf.set_font('DejaVu', '', 12)
                 pdf.cell(0, 5, reshape_text(f"Sales Person: {sp_display_name}"), border=0, ln=1, align="L")
                 pdf.ln(4)
                 draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w)
@@ -427,21 +421,22 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
 
         pdf.ln(10)
 
-    out = pdf.output(dest="S")
-    return bytes(out) if isinstance(out, bytearray) else out
+    pdf_output = pdf.output(dest='S')
+    if isinstance(pdf_output, str):
+    # FPDF 2.x returns str
+     return pdf_output.encode('latin-1')  
+    elif isinstance(pdf_output, bytearray):
+     return bytes(pdf_output)
+    else:
+     return pdf_output  # in case it's already bytes
+
 
 def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer, grace, length):
-    try:
+
         pdf = FPDF(orientation="P", unit="mm", format="A4")
         pdf.add_page()
-
-        font_path = r"D:\FinalCode-main\FinalCode-main\dejavu-sans\DejaVuSans.ttf"
-        if os.path.exists(font_path):
-            pdf.add_font("DejaVu", "", font_path, uni=True)
-            pdf.set_font("DejaVu", "", 11)
-        else:
-            st.warning(f"Font file not found at {font_path}. Using Arial (may not support Arabic).")
-            pdf.set_font("Arial", "", 11)
+        pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+        pdf.set_font('DejaVu', '', 12)
 
         execution_date = datetime.now().strftime("%d/%m/%Y %H:%M %p")
         pdf.set_xy(10, 10)
@@ -478,12 +473,16 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
                 pdf.multi_cell(0, 5, reshape_text(f"العميل: {customer}"), border=0, align="R")
                 pdf.set_xy(10, pdf.get_y())
                 pdf.set_text_color(0, 128, 0) if total_cash_due <= 0 else pdf.set_text_color(255, 0, 0)
-                pdf.cell(0, 5, reshape_text(f"إجمالي المديونية النقدية: {format_number(total_cash_due)}"), border=0, ln=1, align="R")
+                pdf.cell(0, 5, reshape_text(f"إجمالي المديونية النقدية: {format_number(total_cash_due)}"), border=0,
+                         ln=1, align="R")
                 pdf.set_text_color(0, 128, 0) if total_gold_due <= 0 else pdf.set_text_color(0, 0, 255)
-                pdf.cell(0, 5, reshape_text(f"إجمالي المديونية الذهبية: {format_number(total_gold_due)}"), border=0, ln=1, align="R")
+                pdf.cell(0, 5, reshape_text(f"إجمالي المديونية الذهبية: {format_number(total_gold_due)}"), border=0,
+                         ln=1, align="R")
                 pdf.set_text_color(0, 0, 0)
-                pdf.cell(0, 5, reshape_text(f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}"), border=0, ln=1, align="R")
-                pdf.cell(0, 5, reshape_text(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)}"), border=0, ln=1, align="R")
+                pdf.cell(0, 5, reshape_text(f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}"), border=0,
+                         ln=1, align="R")
+                pdf.cell(0, 5, reshape_text(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)}"), border=0,
+                         ln=1, align="R")
                 pdf.ln(4)
 
                 headers = ["رقم الفاتورة", "تاريخ الفاتورة", "المتأخرة G21", "المتأخرة EGP", "عدد أيام التأخير"]
@@ -499,15 +498,12 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
                     pdf.cell(30, 10, str(row["Delay Days"]), border=1, align="R", ln=1)
                 pdf.ln(4)
 
-        out = pdf.output(dest="S")
-        return bytes(out) if isinstance(out, bytearray) else out
-    except Exception as e:
-        st.error(f"Error generating detailed PDF: {str(e)}")
-        return None
+        pdf_output = pdf.output(dest='S')
+        return bytes(pdf_output) if isinstance(pdf_output, bytearray) else pdf_output
 
 # ----------------- Chart Functions -----------------
 def setup_arabic_font():
-    font_path = r"D:\FinalCode-main\FinalCode-main\dejavu-sans\DejaVuSans.ttf"
+    font_path = "DejaVuSans.ttf"
     if os.path.exists(font_path):
         prop = fm.FontProperties(fname=font_path)
         plt.rc('font', family='DejaVu Sans')
@@ -752,10 +748,12 @@ def main():
             pdf = build_detailed_pdf(detail_df, summary_df, sel, as_of, selected_customer, grace, length)
             filename = f"detailed_overdues_{sel}_{as_of}.pdf"
 
-        if pdf and isinstance(pdf, bytes) and len(pdf) > 0:
-            st.download_button("⬇️ تحميل PDF", pdf, filename, "application/pdf")
+        if pdf and (isinstance(pdf, (bytes, str))) and len(pdf) > 0:
+          data = pdf if isinstance(pdf, (bytes, bytearray)) else pdf.encode('latin-1')
+          st.download_button("⬇️ تحميل PDF", data, filename, "application/pdf")
         else:
-            st.error("فشل في إنشاء ملف PDF. تحقق من مسار الخط أو البيانات.")
+          st.error(...)
+ 
 
 if __name__ == "__main__":
     main()
