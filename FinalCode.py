@@ -788,6 +788,7 @@ def main():
                 filename = f"detailed_overdues_{sel}_{as_of}.pdf"
 
             if pdf and isinstance(pdf, (bytes, bytearray)) and len(pdf) > 0:
+                data = pdf if isinstance(pdf, (bytes, bytearray)) else pdf.encode('latin-1')
                 st.download_button("⬇️ تحميل PDF", pdf, filename, "application/pdf")
             else:
                 st.error("فشل في إنشاء ملف PDF.")
