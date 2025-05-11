@@ -12,6 +12,7 @@ import os
 import matplotlib.pyplot as plt
 from io import BytesIO
 import matplotlib.font_manager as fm
+import sqlitecloud
 
 # SQLite Cloud database connection details
 # ----------------- Authentication Setup -----------------
@@ -19,28 +20,36 @@ USER_DB_URI = (
     "sqlitecloud://cpran7d0hz.g2.sqlite.cloud:8860/"
     "user_management.db?apikey=oUEez4Dc0TFsVVIVFu8SDRiXea9YVQLOcbzWBsUwZ78"
 )
-from sqlalchemy import create_engine, text
 
-# Create auth engine once
-auth_engine = create_engine(USER_DB_URI)
-
-def check_login(username, password):
-    """
-    Verify user credentials against the SQLiteCloud 'users' table via SQLAlchemy.
-    """
+# ----------------- وظائف قاعدة البيانات -----------------
+def get_connection():
     try:
-        with auth_engine.connect() as conn:
-            qry = text(
-                "SELECT 1 "
-                "FROM users "
-                "WHERE username = :u AND  password_hash = :p "
-                "LIMIT 1"
-            )
-            row = conn.execute(qry, {"u": username, "p": password}).first()
-            return row is not None
+        return sqlitecloud.connect(USER_DB_URI)
     except Exception as e:
-        st.error(f"Auth DB error: {e}")
-        return False
+        st.error(f"خطأ في الاتصال: {e}")
+        return None
+
+@st.cache_data(ttl=300)
+def get_all_users():
+    conn = get_connection()
+    if conn:
+        df = pd.read_sql("SELECT id, username, role, permissions, full_name FROM users", conn)
+        conn.close()
+        return df
+    return pd.DataFrame(columns=['id','username','role','permissions','full_name'])
+
+def get_user_record(username: str):
+    conn = get_connection()
+    if conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, password_hash, permissions, role FROM users WHERE username = ?",
+            (username,)
+        )
+        rec = c.fetchone()
+        conn.close()
+        return rec
+    return None
 
 
 # ----------------- Helper Functions -----------------
