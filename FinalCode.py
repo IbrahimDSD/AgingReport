@@ -140,13 +140,13 @@ def bucketize(days, grace, length):
 
 def format_number(value):
     try:
-        value = round(float(value), 3)
+        value = round(float(value), 2)
         if value < 0:
-            return f"({abs(value):,.3f})"
+            return f"({abs(value):,.2f})"
         elif value == 0:
             return "-"
         else:
-            return f"{value:,.3f}"
+            return f"{value:,.2f}"
     except (ValueError, TypeError):
         return str(value)
 
