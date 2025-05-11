@@ -523,9 +523,9 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
         gold_lbl = reshape_text(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)} G21")
         cash_lbl = reshape_text(f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)} EGP")
         pdf.set_text_color(0, 0, 255)  # لون الذهب
-        pdf.cell(0, 6, gold_lbl, border=0, ln=0, align="R")
+        pdf.cell(0, 6, gold_lbl, border=0, ln=0, align="L")
         pdf.set_text_color(255, 0, 0)  # لون الكاش
-        pdf.cell(0, 6, cash_lbl, border=0, ln=1, align="R")
+        pdf.cell(0, 6, cash_lbl, border=0, ln=1, align="L")
         pdf.ln(1)
 
         # --- سطر إجمالي المديونية: ذهب ثم نقداً ---
