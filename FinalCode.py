@@ -13,6 +13,19 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 import matplotlib.font_manager as fm
 
+# تعريف URI قاعدة بيانات المستخدمين
+USER_DB_URI = (
+    "sqlitecloud://cpran7d0hz.g2.sqlite.cloud:8860/"
+    "user_management.db?apikey=oUEez4Dc0TFsVVIVFu8SDRiXea9YVQLOcbzWBsUwZ78"
+)
+
+# دالة للتحقق من بيانات تسجيل الدخول
+def check_login(username, password, user_engine):
+    query = text("SELECT * FROM users WHERE username = :username AND password = :password")
+    with user_engine.connect() as conn:
+        result = conn.execute(query, {"username": username, "password": password})
+        return result.fetchone() is not None
+
 # ----------------- Helpers -----------------
 def reshape_text(txt):
     return get_display(arabic_reshaper.reshape(str(txt)))
@@ -45,15 +58,11 @@ def convert_gold(cur, amt):
     
 PRIORITY_FIDS = {3001, 3100, 3108, 3113, 3104}
 def process_fifo(debits, credits, as_of, priority_fids=PRIORITY_FIDS):
-    # فلترنالكريدتس حسب التاريخ
     credits = [c for c in credits if c["date"] <= as_of]
-
-    # فرز الديبتس ذوي الأولوية أولاً، بناءً على (date, invoiceref)
     pri = deque(sorted(
         [d for d in debits if d["date"] <= as_of and d["functionid"] in priority_fids],
         key=lambda x: (x["date"], x["invoiceref"])
     ))
-    # ثم بقية الديبتس بنفس القاعدة
     reg = deque(sorted(
         [d for d in debits if d["date"] <= as_of and d["functionid"] not in priority_fids],
         key=lambda x: (x["date"], x["invoiceref"])
@@ -62,8 +71,6 @@ def process_fifo(debits, credits, as_of, priority_fids=PRIORITY_FIDS):
     excess = 0.0
     for cr in sorted(credits, key=lambda x: (x["date"], x.get("invoiceref", ""))):
         rem = cr["amount"]
-
-        # دَين الأولوية
         while rem > 0 and pri:
             d = pri[0]
             ap = min(rem, d["remaining"])
@@ -72,8 +79,6 @@ def process_fifo(debits, credits, as_of, priority_fids=PRIORITY_FIDS):
             if d["remaining"] <= 0:
                 d["paid_date"] = cr["date"]
                 pri.popleft()
-
-        # بعد نفاد الأولوية ننتقل للعادي
         while rem > 0 and not pri and reg:
             d = reg[0]
             ap = min(rem, d["remaining"])
@@ -82,14 +87,12 @@ def process_fifo(debits, credits, as_of, priority_fids=PRIORITY_FIDS):
             if d["remaining"] <= 0:
                 d["paid_date"] = cr["date"]
                 reg.popleft()
-
         excess += rem
 
     remaining = list(pri) + list(reg)
     total_remaining = sum(d["remaining"] for d in remaining)
     net_balance = total_remaining - excess
     return remaining, net_balance
-
 
 def bucketize(days, grace, length):
     if days <= grace:
@@ -105,15 +108,15 @@ def bucketize(days, grace, length):
 
 def format_number(value):
     try:
-        value = float(value)
+        value = round(float(value), 2)  # تقريب القيمة إلى رقمين عشريين
         if value < 0:
-            return f"({abs(value):,.2f})"
+            return f"({abs(value):,.2f})"  # تنسيق الأرقام السالبة بين قوسين
         elif value == 0:
-            return "-"
+            return "-"  # عرض الصفر كشرطة
         else:
-            return f"{value:,.2f}"
+            return f"{value:,.2f}"  # تنسيق الأرقام الموجبة مع فاصلة للآلاف
     except (ValueError, TypeError):
-        return str(value)
+        return str(value)  # إرجاع القيمة كنص إذا لم تكن رقمية
 
 # ----------------- Data Fetching -----------------
 @st.cache_data(ttl=600)
@@ -143,7 +146,6 @@ def get_customers(_engine, sp_id):
 
 @st.cache_data(ttl=300)
 def get_overdues(_engine, sp_id, as_of, grace, length):
-    # pull functionid in SQL
     base_sql = """
         SELECT f.accountid,
                f.functionid,
@@ -193,7 +195,6 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
             invoiceref = r["invoiceref"]
             fid = r["functionid"]
 
-            # cash
             if r["currencyid"] == 1:
                 if amt > 0:
                     cash_debits.append({
@@ -206,7 +207,6 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
                     })
                 else:
                     cash_credits.append({"date": dt, "amount": abs(amt)})
-            # gold
             else:
                 grams = convert_gold(r["currencyid"], amt)
                 if amt > 0:
@@ -221,11 +221,9 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
                 else:
                     gold_credits.append({"date": dt, "amount": abs(grams)})
 
-        # apply priority-aware FIFO
         pc, net_cash = process_fifo(cash_debits, cash_credits, pd.to_datetime(as_of))
         pg, net_gold = process_fifo(gold_debits, gold_credits, pd.to_datetime(as_of))
 
-        # bucket and build summary/detail rows
         sums = {f"cash_{b}": 0.0 for b in buckets}
         sums.update({f"gold_{b}": 0.0 for b in buckets})
         inv_over = {}
@@ -250,7 +248,6 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
                             }
                         inv_over[ref][f"Overdue {'G21' if pfx=='gold' else 'EGP'}"] += d["remaining"]
 
-        # add detail rows
         invoice_data.extend(inv_over.values())
 
         cash_total = sum(sums[f"cash_{b}"] for b in buckets)
@@ -271,11 +268,11 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
     summary_df = pd.DataFrame(summary_rows)
     detail_df = pd.DataFrame(invoice_data)
     if not detail_df.empty:
-      detail_df.sort_values(
-        by=["Invoice Date", "Invoice Ref"],
-        key=lambda col: col.astype(str),   # نضمن أنها نصوص قابلة للفرز أبجدياً
-        inplace=True
-    )
+        detail_df.sort_values(
+            by=["Invoice Date", "Invoice Ref"],
+            key=lambda col: col.astype(str),
+            inplace=True
+        )
     return summary_df, buckets, detail_df
 
 # ----------------- PDF Functions -----------------
@@ -357,30 +354,25 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
         draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w)
 
         for _, r in group.iterrows():
-            row_h = line_h  # Start with minimum height
-            # Calculate height for total_gold_due
+            row_h = line_h
             lines_g21 = pdf.multi_cell(sub_w, line_h, format_number(r["total_gold_due"]), border=0, align="R", split_only=True)
             g21_h = len(lines_g21) * line_h
             row_h = max(row_h, g21_h)
-            # Calculate height for total_cash_due
             lines_egp = pdf.multi_cell(sub_w, line_h, format_number(r["total_cash_due"]), border=0, align="R", split_only=True)
             egp_h = len(lines_egp) * line_h
             row_h = max(row_h, egp_h)
-            # Calculate heights for each bucket
             for b in buckets:
                 lines_gold = pdf.multi_cell(sub_w, line_h, format_number(r[f"gold_{b}"]), border=0, align="R", split_only=True)
                 gold_h = len(lines_gold) * line_h
                 lines_cash = pdf.multi_cell(sub_w, line_h, format_number(r[f"cash_{b}"]), border=0, align="R", split_only=True)
                 cash_h = len(lines_cash) * line_h
                 row_h = max(row_h, gold_h, cash_h)
-            # Calculate heights for totals
             lines_tot_g21 = pdf.multi_cell(sub_w, line_h, format_number(r["gold_total"]), border=0, align="R", split_only=True)
             tot_g21_h = len(lines_tot_g21) * line_h
             lines_tot_egp = pdf.multi_cell(sub_w, line_h, format_number(r["cash_total"]), border=0, align="R", split_only=True)
             tot_egp_h = len(lines_tot_egp) * line_h
             row_h = max(row_h, tot_g21_h, tot_egp_h)
 
-            # Check for page break
             if pdf.get_y() + row_h + bottom_margin > pdf.h:
                 pdf.add_page()
                 pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
@@ -390,28 +382,23 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
                 draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w)
 
             x0, y0 = pdf.get_x(), pdf.get_y()
-
-            # Draw Customer Name
             customer_name = reshape_text(r["Customer"])
             if pdf.get_string_width(customer_name) > name_w - 2:
                 customer_name = truncate_text(pdf, customer_name, name_w - 2)
             pdf.cell(name_w, line_h, customer_name, border=1, align="L", ln=0)
 
-            # Draw Total Gold Due
             pdf.set_xy(x0 + name_w, y0)
             color = (0, 128, 0) if r["total_gold_due"] <= 0 else (0, 0, 255)
             pdf.set_text_color(*color)
             pdf.multi_cell(sub_w, line_h, format_number(r["total_gold_due"]), border=1, align="R")
             pdf.set_text_color(0, 0, 0)
 
-            # Draw Total Cash Due
             pdf.set_xy(x0 + name_w + sub_w, y0)
             color = (0, 128, 0) if r["total_cash_due"] <= 0 else (255, 0, 0)
             pdf.set_text_color(*color)
             pdf.multi_cell(sub_w, line_h, format_number(r["total_cash_due"]), border=1, align="R")
             pdf.set_text_color(0, 0, 0)
 
-            # Draw Buckets
             x_b = x0 + name_w + bal_w
             for i, b in enumerate(buckets):
                 pdf.set_xy(x_b + i * bucket_w, y0)
@@ -419,14 +406,12 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
                 pdf.set_xy(x_b + i * bucket_w + sub_w, y0)
                 pdf.multi_cell(sub_w, line_h, format_number(r[f"cash_{b}"]), border=1, align="R")
 
-            # Draw Totals
             x_t = x_b + len(buckets) * bucket_w
             pdf.set_xy(x_t, y0)
             pdf.multi_cell(sub_w, line_h, format_number(r["gold_total"]), border=1, align="R")
             pdf.set_xy(x_t + sub_w, y0)
             pdf.multi_cell(sub_w, line_h, format_number(r["cash_total"]), border=1, align="R")
 
-            # Move to the next row position
             pdf.set_xy(x0, y0 + row_h)
 
         pdf.ln(10)
@@ -434,76 +419,70 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     out = pdf.output(dest="S")
     return bytes(out) if isinstance(out, bytearray) else out
 
-
 def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer, grace, length):
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.add_page()
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+    pdf.set_font('DejaVu', '', 12)
 
-        pdf = FPDF(orientation="P", unit="mm", format="A4")
-        pdf.add_page()
-        pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
-        pdf.set_font('DejaVu', '', 12)
+    execution_date = datetime.now().strftime("%d/%m/%Y %H:%M %p")
+    pdf.set_xy(10, 10)
+    pdf.cell(0, 5, reshape_text(f"New Egypt Gold | تقرير تفصيلي للمتأخرات"), border=0, ln=0, align="R")
+    pdf.cell(-50, 5, f"ITS-08223 / EGS", border=0, ln=0, align="R")
+    pdf.ln(5)
+    pdf.cell(0, 5, f"Execution Date: {execution_date}", border=0, ln=0, align="L")
+    pdf.cell(-50, 5, f"Page Number: 1/1", border=0, ln=0, align="R")
+    pdf.ln(10)
 
-        execution_date = datetime.now().strftime("%d/%m/%Y %H:%M %p")
-        pdf.set_xy(10, 10)
-        pdf.cell(0, 5, reshape_text(f"New Egypt Gold | تقرير تفصيلي للمتأخرات"), border=0, ln=0, align="R")
-        pdf.cell(-50, 5, f"ITS-08223 / EGS", border=0, ln=0, align="R")
-        pdf.ln(5)
-        pdf.cell(0, 5, f"Execution Date: {execution_date}", border=0, ln=0, align="L")
-        pdf.cell(-50, 5, f"Page Number: 1/1", border=0, ln=0, align="R")
-        pdf.ln(10)
+    table_width = 120
+    col_widths = [40, 80]
+    pdf.set_xy(10, pdf.get_y())
+    draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length, table_width, col_widths)
+    pdf.ln(10)
 
-        table_width = 120
-        col_widths = [40, 80]
-        pdf.set_xy(10, pdf.get_y())
-        draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length, table_width, col_widths)
-        pdf.ln(10)
+    pdf.set_fill_color(200, 200, 200)
+    pdf.cell(0, 8, reshape_text("Customer Delays By Custom Range."), border=1, ln=1, align="C", fill=True)
+    pdf.cell(30, 5, reshape_text("Due Date:"), border=0, ln=0, align="L")
+    pdf.cell(30, 5, as_of.strftime("%d/%m/%Y"), border=0, ln=0, align="L")
+    pdf.ln(5)
 
-        pdf.set_fill_color(200, 200, 200)
-        pdf.cell(0, 8, reshape_text("Customer Delays By Custom Range."), border=1, ln=1, align="C", fill=True)
-        pdf.cell(30, 5, reshape_text("Due Date:"), border=0, ln=0, align="L")
-        pdf.cell(30, 5, as_of.strftime("%d/%m/%Y"), border=0, ln=0, align="L")
-        pdf.ln(5)
+    customers = set(summary_df["Customer"])
+    for customer in sorted(customers):
+        group = detail_df[detail_df["Customer Name"] == customer]
+        if not group.empty:
+            customer_summary = summary_df[summary_df["Customer"] == customer]
+            total_cash_due = customer_summary["total_cash_due"].iloc[0] if not customer_summary.empty else 0.0
+            total_gold_due = customer_summary["total_gold_due"].iloc[0] if not customer_summary.empty else 0.0
+            total_cash_overdue = customer_summary["cash_total"].iloc[0] if not customer_summary.empty else 0.0
+            total_gold_overdue = customer_summary["gold_total"].iloc[0] if not customer_summary.empty else 0.0
 
-        customers = set(summary_df["Customer"])
-        for customer in sorted(customers):
-            group = detail_df[detail_df["Customer Name"] == customer]
-            if not group.empty:  # Only include customers with overdue invoices
-                customer_summary = summary_df[summary_df["Customer"] == customer]
-                total_cash_due = customer_summary["total_cash_due"].iloc[0] if not customer_summary.empty else 0.0
-                total_gold_due = customer_summary["total_gold_due"].iloc[0] if not customer_summary.empty else 0.0
-                total_cash_overdue = customer_summary["cash_total"].iloc[0] if not customer_summary.empty else 0.0
-                total_gold_overdue = customer_summary["gold_total"].iloc[0] if not customer_summary.empty else 0.0
+            pdf.set_xy(10, pdf.get_y())
+            pdf.multi_cell(0, 5, reshape_text(f"العميل: {customer}"), border=0, align="R")
+            pdf.set_xy(10, pdf.get_y())
+            pdf.set_text_color(0, 128, 0) if total_cash_due <= 0 else pdf.set_text_color(255, 0, 0)
+            pdf.cell(0, 5, reshape_text(f"إجمالي المديونية النقدية: {format_number(total_cash_due)}"), border=0, ln=1, align="R")
+            pdf.set_text_color(0, 128, 0) if total_gold_due <= 0 else pdf.set_text_color(0, 0, 255)
+            pdf.cell(0, 5, reshape_text(f"إجمالي المديونية الذهبية: {format_number(total_gold_due)}"), border=0, ln=1, align="R")
+            pdf.set_text_color(0, 0, 0)
+            pdf.cell(0, 5, reshape_text(f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}"), border=0, ln=1, align="R")
+            pdf.cell(0, 5, reshape_text(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)}"), border=0, ln=1, align="R")
+            pdf.ln(4)
 
-                pdf.set_xy(10, pdf.get_y())
-                pdf.multi_cell(0, 5, reshape_text(f"العميل: {customer}"), border=0, align="R")
-                pdf.set_xy(10, pdf.get_y())
-                pdf.set_text_color(0, 128, 0) if total_cash_due <= 0 else pdf.set_text_color(255, 0, 0)
-                pdf.cell(0, 5, reshape_text(f"إجمالي المديونية النقدية: {format_number(total_cash_due)}"), border=0,
-                         ln=1, align="R")
-                pdf.set_text_color(0, 128, 0) if total_gold_due <= 0 else pdf.set_text_color(0, 0, 255)
-                pdf.cell(0, 5, reshape_text(f"إجمالي المديونية الذهبية: {format_number(total_gold_due)}"), border=0,
-                         ln=1, align="R")
-                pdf.set_text_color(0, 0, 0)
-                pdf.cell(0, 5, reshape_text(f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}"), border=0,
-                         ln=1, align="R")
-                pdf.cell(0, 5, reshape_text(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)}"), border=0,
-                         ln=1, align="R")
-                pdf.ln(4)
+            headers = ["رقم الفاتورة", "تاريخ الفاتورة", "المتأخرة G21", "المتأخرة EGP", "عدد أيام التأخير"]
+            widths = [40, 40, 30, 30, 30]
+            for w, h in zip(widths, headers):
+                pdf.cell(w, 8, reshape_text(h), border=1, ln=0, align="C")
+            pdf.ln()
+            for _, row in group.iterrows():
+                pdf.cell(40, 10, reshape_text(row["Invoice Ref"]), border=1, align="C", ln=0)
+                pdf.cell(40, 10, str(row["Invoice Date"]), border=1, align="C", ln=0)
+                pdf.cell(30, 10, format_number(row["Overdue G21"]), border=1, align="R", ln=0)
+                pdf.cell(30, 10, format_number(row["Overdue EGP"]), border=1, align="R", ln=0)
+                pdf.cell(30, 10, str(row["Delay Days"]), border=1, align="R", ln=1)
+            pdf.ln(4)
 
-                headers = ["رقم الفاتورة", "تاريخ الفاتورة", "المتأخرة G21", "المتأخرة EGP", "عدد أيام التأخير"]
-                widths = [40, 40, 30, 30, 30]
-                for w, h in zip(widths, headers):
-                    pdf.cell(w, 8, reshape_text(h), border=1, ln=0, align="C")
-                pdf.ln()
-                for _, row in group.iterrows():
-                    pdf.cell(40, 10, reshape_text(row["Invoice Ref"]), border=1, align="C", ln=0)
-                    pdf.cell(40, 10, str(row["Invoice Date"]), border=1, align="C", ln=0)
-                    pdf.cell(30, 10, format_number(row["Overdue G21"]), border=1, align="R", ln=0)
-                    pdf.cell(30, 10, format_number(row["Overdue EGP"]), border=1, align="R", ln=0)
-                    pdf.cell(30, 10, str(row["Delay Days"]), border=1, align="R", ln=1)
-                pdf.ln(4)
-
-        pdf_output = pdf.output(dest='S')
-        return bytes(pdf_output) if isinstance(pdf_output, bytearray) else pdf_output
+    pdf_output = pdf.output(dest='S')
+    return bytes(pdf_output) if isinstance(pdf_output, bytearray) else pdf_output
 
 # ----------------- Chart Functions -----------------
 def setup_arabic_font():
@@ -588,176 +567,197 @@ def main():
     st.set_page_config(page_title="Aging Report", layout="wide")
     st.title("📊 تقرير متأخرات العملاء حسب Sales Person")
 
-    engine, err = create_db_engine()
-    if err:
-        st.error("خطأ في الاتصال: " + err)
-        return
+    # إنشاء محرك الاتصال بقاعدة بيانات المستخدمين
+    user_engine = create_engine(USER_DB_URI)
 
-    sps = get_salespersons(engine)
-    sp_options = ["All"] + sps["name"].tolist()
-    sel = st.sidebar.selectbox("Sales Person", sp_options)
-    if sel == "---":
-        st.info("اختر Sales Person")
-        return
+    # التحقق من حالة تسجيل الدخول
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
 
-    sp_id = None if sel == "All" else (int(sps.loc[sps["name"] == sel, "recordid"].iloc[0]))
-    customers = get_customers(engine, sp_id)
-    customer_options = ["الكل"] + customers["name"].tolist()
-    selected_customer = st.sidebar.selectbox("Customer Name", customer_options)
-
-    as_of = st.sidebar.date_input("Due Date", date.today())
-    grace = st.sidebar.number_input("Grace Period", 0, 100, 30)
-    length = st.sidebar.number_input("Period Length", 1, 365, 15)
-    report_type = st.sidebar.selectbox("Report Type", ["Summary Report", "Details Report"])
-
-    if st.sidebar.button("Generate"):
-        summary_df, buckets, detail_df = get_overdues(engine, sp_id, as_of, grace, length)
-        if summary_df.empty:
-            st.warning("لا توجد متأخرات أو أرصدة لهذا المندوب.")
-            return
-
-        if selected_customer != "الكل":
-            summary_df = summary_df[summary_df["Customer"] == selected_customer]
-            detail_df = detail_df[detail_df["Customer Name"] == selected_customer]
-
-        if summary_df.empty:
-            st.warning("لا توجد متأخرات أو أرصدة لهذا العميل.")
-            return
-
-        st.subheader(f"المتأخرات حتى {as_of} (بعد فترة السماحية {grace} يوم)")
-
-        overdue_buckets = buckets
-        cash_grand_total = sum(summary_df[f"cash_{b}"].sum() for b in overdue_buckets)
-        gold_grand_total = sum(summary_df[f"gold_{b}"].sum() for b in overdue_buckets)
-        total_cash_due = summary_df["total_cash_due"].sum()
-        total_gold_due = summary_df["total_gold_due"].sum()
-
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Cash Balance", f"{format_number(total_cash_due)} EGP",
-                      delta_color="normal" if total_cash_due > 0 else "inverse")
-        with col2:
-            st.metric("Total Cash Delays", f"{format_number(cash_grand_total)} EGP")
-        with col3:
-            st.metric("Total Gold Balance", f"{format_number(total_gold_due)} G21",
-                      delta_color="normal" if total_gold_due > 0 else "inverse")
-        with col4:
-            st.metric("Total Gold Delays", f"{format_number(gold_grand_total)} G21")
-
-        # Display Charts
-        st.subheader("تحليل المتأخرات")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**توزيع التأخيرات حسب الفترة (كاش)**")
-            pie_chart_cash = create_pie_chart(summary_df, buckets, type="cash")
-            if pie_chart_cash:
-                st.image(pie_chart_cash)
-            st.markdown("**توزيع التأخيرات حسب الفترة (ذهب)**")
-            pie_chart_gold = create_pie_chart(summary_df, buckets, type="gold")
-            if pie_chart_gold:
-                st.image(pie_chart_gold)
-        with col2:
-            st.markdown("**أعلى 10 عملاء بالمتأخرات (كاش)**")
-            bar_chart_cash = create_bar_chart(summary_df, buckets, type="cash")
-            if bar_chart_cash:
-                st.image(bar_chart_cash)
-            st.markdown("**أعلى 10 عملاء بالمتأخرات (ذهب)**")
-            bar_chart_gold = create_bar_chart(summary_df, buckets, type="gold")
-            if bar_chart_gold:
-                st.image(bar_chart_gold)
-
-        if report_type == "Summary Report":
-            st.markdown("**المتأخرات**")
-            columns = ["Code", "Customer", "total_gold_due", "total_cash_due"]
-            for b in buckets:
-                columns.append(f"gold_{b}")
-                columns.append(f"cash_{b}")
-            columns.extend(["gold_total", "cash_total"])
-
-            display_df = summary_df[columns].copy()
-            display_df["total_gold_due"] = display_df["total_gold_due"].apply(format_number)
-            display_df["total_cash_due"] = display_df["total_cash_due"].apply(format_number)
-            display_df["gold_total"] = display_df["gold_total"].apply(format_number)
-            display_df["cash_total"] = display_df["cash_total"].apply(format_number)
-            for b in buckets:
-                display_df[f"gold_{b}"] = display_df[f"gold_{b}"].apply(format_number)
-                display_df[f"cash_{b}"] = display_df[f"cash_{b}"].apply(format_number)
-
-            column_mapping = {
-                "Code": "Customer Ref",
-                "Customer": "Customer Name",
-                "total_gold_due": "Total G21 Balance",
-                "total_cash_due": "Total EGP Balance",
-                "gold_total": "Total G21 Delay",
-                "cash_total": "Total EGP Delay"
-            }
-            for b in buckets:
-                display_label = f"من {b.replace('-', ' إلى ').replace('>', 'أكبر من ')} يوم"
-                column_mapping[f"gold_{b}"] = f"{display_label} G21"
-                column_mapping[f"cash_{b}"] = f"{display_label} EGP"
-
-            def highlight_negatives(s):
-                if s.name in ["Total G21 Balance", "Total EGP Balance"]:
-                    return ['background-color: red' if v.startswith('(') else '' for v in s]
-                return [''] * len(s)
-
-            st.dataframe(
-                display_df.rename(columns=column_mapping).style.apply(highlight_negatives, axis=0),
-                use_container_width=True
-            )
-
-            pdf = build_summary_pdf(summary_df, sel, as_of, buckets, selected_customer, grace, length)
-            filename = f"summary_overdues_{sel}_{as_of}.pdf"
-
-        else:
-            st.subheader("تفاصيل متأخرات العملاء")
-            customers = set(summary_df["Customer"])
-            if customers:
-                st.markdown("**تفاصيل الفواتير المتأخرة (بعد فترة السماحية)**")
-                for customer in sorted(customers):
-                    group = detail_df[detail_df["Customer Name"] == customer]
-                    if not group.empty:  # Only include customers with overdue invoices
-                        customer_summary = summary_df[summary_df["Customer"] == customer]
-                        total_cash_due = customer_summary["total_cash_due"].iloc[0] if not customer_summary.empty else 0.0
-                        total_gold_due = customer_summary["total_gold_due"].iloc[0] if not customer_summary.empty else 0.0
-                        total_cash_overdue = customer_summary["cash_total"].iloc[0] if not customer_summary.empty else 0.0
-                        total_gold_overdue = customer_summary["gold_total"].iloc[0] if not customer_summary.empty else 0.0
-
-                        st.markdown(f"**العميل: {customer} (كود: {customer_summary['Code'].iloc[0] if not customer_summary.empty else '-'})**")
-                        color_cash = "green" if total_cash_due <= 0 else "red"
-                        color_gold = "green" if total_gold_due <= 0 else "blue"
-                        st.markdown(f"<span style='color: {color_gold};'>إجمالي المديونية الذهبية: {format_number(total_gold_due)}</span> | "
-                                    f"<span style='color: {color_cash};'>إجمالي المديونية النقدية: {format_number(total_cash_due)}</span>",
-                                    unsafe_allow_html=True)
-                        st.markdown(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)} | "
-                                    f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}",
-                                    unsafe_allow_html=True)
-
-                        display_group = group[["Invoice Ref", "Invoice Date", "Overdue G21", "Overdue EGP", "Delay Days"]].copy()
-                        display_group["Overdue G21"] = display_group["Overdue G21"].apply(format_number)
-                        display_group["Overdue EGP"] = display_group["Overdue EGP"].apply(format_number)
-                        st.dataframe(
-                            display_group.rename(columns={
-                                "Invoice Ref": "Invoice Ref",
-                                "Invoice Date": "Invoice Date",
-                                "Overdue G21": "G21 Delay",
-                                "Overdue EGP": "EGP Delay",
-                                "Delay Days": "Delay Days"
-                            }),
-                            use_container_width=True
-                        )
+    if not st.session_state.logged_in:
+        st.subheader("تسجيل الدخول")
+        username = st.text_input("اسم المستخدم")
+        password = st.text_input("كلمة المرور", type="password")
+        if st.button("تسجيل الدخول"):
+            if check_login(username, password, user_engine):
+                st.session_state.logged_in = True
+                st.success("تم تسجيل الدخول بنجاح!")
+                st.rerun()
             else:
-                st.warning("لا توجد فواتير متأخرة أو أرصدة.")
+                st.error("اسم المستخدم أو كلمة المرور غير صحيحة.")
+    else:
+        engine, err = create_db_engine()
+        if err:
+            st.error("خطأ في الاتصال: " + err)
+            return
 
-            pdf = build_detailed_pdf(detail_df, summary_df, sel, as_of, selected_customer, grace, length)
-            filename = f"detailed_overdues_{sel}_{as_of}.pdf"
+        sps = get_salespersons(engine)
+        sp_options = ["All"] + sps["name"].tolist()
+        sel = st.sidebar.selectbox("Sales Person", sp_options)
+        if sel == "---":
+            st.info("اختر Sales Person")
+            return
 
-        if pdf and (isinstance(pdf, (bytes, str))) and len(pdf) > 0:
-          data = pdf if isinstance(pdf, (bytes, bytearray)) else pdf.encode('latin-1')
-          st.download_button("⬇️ تحميل PDF", data, filename, "application/pdf")
-        else:
-          st.error(...)
- 
+        sp_id = None if sel == "All" else (int(sps.loc[sps["name"] == sel, "recordid"].iloc[0]))
+        customers = get_customers(engine, sp_id)
+        customer_options = ["الكل"] + customers["name"].tolist()
+        selected_customer = st.sidebar.selectbox("Customer Name", customer_options)
+
+        as_of = st.sidebar.date_input("Due Date", date.today())
+        grace = st.sidebar.number_input("Grace Period", 0, 100, 30)
+        length = st.sidebar.number_input("Period Length", 1, 365, 15)
+        report_type = st.sidebar.selectbox("Report Type", ["Summary Report", "Details Report"])
+
+        if st.sidebar.button("Generate"):
+            summary_df, buckets, detail_df = get_overdues(engine, sp_id, as_of, grace, length)
+            if summary_df.empty:
+                st.warning("لا توجد متأخرات أو أرصدة لهذا المندوب.")
+                return
+
+            if selected_customer != "الكل":
+                summary_df = summary_df[summary_df["Customer"] == selected_customer]
+                detail_df = detail_df[detail_df["Customer Name"] == selected_customer]
+
+            if summary_df.empty:
+                st.warning("لا توجد متأخرات أو أرصدة لهذا العميل.")
+                return
+
+            st.subheader(f"المتأخرات حتى {as_of} (بعد فترة السماحية {grace} يوم)")
+
+            overdue_buckets = buckets
+            cash_grand_total = sum(summary_df[f"cash_{b}"].sum() for b in overdue_buckets)
+            gold_grand_total = sum(summary_df[f"gold_{b}"].sum() for b in overdue_buckets)
+            total_cash_due = summary_df["total_cash_due"].sum()
+            total_gold_due = summary_df["total_gold_due"].sum()
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Cash Balance", f"{format_number(total_cash_due)} EGP",
+                          delta_color="normal" if total_cash_due > 0 else "inverse")
+            with col2:
+                st.metric("Total Cash Delays", f"{format_number(cash_grand_total)} EGP")
+            with col3:
+                st.metric("Total Gold Balance", f"{format_number(total_gold_due)} G21",
+                          delta_color="normal" if total_gold_due > 0 else "inverse")
+            with col4:
+                st.metric("Total Gold Delays", f"{format_number(gold_grand_total)} G21")
+
+            st.subheader("تحليل المتأخرات")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**توزيع التأخيرات حسب الفترة (كاش)**")
+                pie_chart_cash = create_pie_chart(summary_df, buckets, type="cash")
+                if pie_chart_cash:
+                    st.image(pie_chart_cash)
+                st.markdown("**توزيع التأخيرات حسب الفترة (ذهب)**")
+                pie_chart_gold = create_pie_chart(summary_df, buckets, type="gold")
+                if pie_chart_gold:
+                    st.image(pie_chart_gold)
+            with col2:
+                st.markdown("**أعلى 10 عملاء بالمتأخرات (كاش)**")
+                bar_chart_cash = create_bar_chart(summary_df, buckets, type="cash")
+                if bar_chart_cash:
+                    st.image(bar_chart_cash)
+                st.markdown("**أعلى 10 عملاء بالمتأخرات (ذهب)**")
+                bar_chart_gold = create_bar_chart(summary_df, buckets, type="gold")
+                if bar_chart_gold:
+                    st.image(bar_chart_gold)
+
+            if report_type == "Summary Report":
+                st.markdown("**المتأخرات**")
+                columns = ["Code", "Customer", "total_gold_due", "total_cash_due"]
+                for b in buckets:
+                    columns.append(f"gold_{b}")
+                    columns.append(f"cash_{b}")
+                columns.extend(["gold_total", "cash_total"])
+
+                display_df = summary_df[columns].copy()
+                display_df["total_gold_due"] = display_df["total_gold_due"].apply(format_number)
+                display_df["total_cash_due"] = display_df["total_cash_due"].apply(format_number)
+                display_df["gold_total"] = display_df["gold_total"].apply(format_number)
+                display_df["cash_total"] = display_df["cash_total"].apply(format_number)
+                for b in buckets:
+                    display_df[f"gold_{b}"] = display_df[f"gold_{b}"].apply(format_number)
+                    display_df[f"cash_{b}"] = display_df[f"cash_{b}"].apply(format_number)
+
+                column_mapping = {
+                    "Code": "Customer Ref",
+                    "Customer": "Customer Name",
+                    "total_gold_due": "Total G21 Balance",
+                    "total_cash_due": "Total EGP Balance",
+                    "gold_total": "Total G21 Delay",
+                    "cash_total": "Total EGP Delay"
+                }
+                for b in buckets:
+                    display_label = f"من {b.replace('-', ' إلى ').replace('>', 'أكبر من ')} يوم"
+                    column_mapping[f"gold_{b}"] = f"{display_label} G21"
+                    column_mapping[f"cash_{b}"] = f"{display_label} EGP"
+
+                def highlight_negatives(s):
+                    if s.name in ["Total G21 Balance", "Total EGP Balance"]:
+                        return ['background-color: red' if v.startswith('(') else '' for v in s]
+                    return [''] * len(s)
+
+                st.dataframe(
+                    display_df.rename(columns=column_mapping).style.apply(highlight_negatives, axis=0),
+                    use_container_width=True
+                )
+
+                pdf = build_summary_pdf(summary_df, sel, as_of, buckets, selected_customer, grace, length)
+                filename = f"summary_overdues_{sel}_{as_of}.pdf"
+
+            else:
+                st.subheader("تفاصيل متأخرات العملاء")
+                customers = set(summary_df["Customer"])
+                if customers:
+                    st.markdown("**تفاصيل الفواتير المتأخرة (بعد فترة السماحية)**")
+                    for customer in sorted(customers):
+                        group = detail_df[detail_df["Customer Name"] == customer]
+                        if not group.empty:
+                            customer_summary = summary_df[summary_df["Customer"] == customer]
+                            total_cash_due = customer_summary["total_cash_due"].iloc[0] if not customer_summary.empty else 0.0
+                            total_gold_due = customer_summary["total_gold_due"].iloc[0] if not customer_summary.empty else 0.0
+                            total_cash_overdue = customer_summary["cash_total"].iloc[0] if not customer_summary.empty else 0.0
+                            total_gold_overdue = customer_summary["gold_total"].iloc[0] if not customer_summary.empty else 0.0
+
+                            st.markdown(f"**العميل: {customer} (كود: {customer_summary['Code'].iloc[0] if not customer_summary.empty else '-'})**")
+                            color_cash = "green" if total_cash_due <= 0 else "red"
+                            color_gold = "green" if total_gold_due <= 0 else "blue"
+                            st.markdown(f"<span style='color: {color_gold};'>إجمالي المديونية الذهبية: {format_number(total_gold_due)}</span> | "
+                                        f"<span style='color: {color_cash};'>إجمالي المديونية النقدية: {format_number(total_cash_due)}</span>",
+                                        unsafe_allow_html=True)
+                            st.markdown(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)} | "
+                                        f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}",
+                                        unsafe_allow_html=True)
+
+                            display_group = group[["Invoice Ref", "Invoice Date", "Overdue G21", "Overdue EGP", "Delay Days"]].copy()
+                            display_group["Overdue G21"] = display_group["Overdue G21"].apply(format_number)
+                            display_group["Overdue EGP"] = display_group["Overdue EGP"].apply(format_number)
+                            st.dataframe(
+                                display_group.rename(columns={
+                                    "Invoice Ref": "Invoice Ref",
+                                    "Invoice Date": "Invoice Date",
+                                    "Overdue G21": "G21 Delay",
+                                    "Overdue EGP": "EGP Delay",
+                                    "Delay Days": "Delay Days"
+                                }),
+                                use_container_width=True
+                            )
+                else:
+                    st.warning("لا توجد فواتير متأخرة أو أرصدة.")
+
+                pdf = build_detailed_pdf(detail_df, summary_df, sel, as_of, selected_customer, grace, length)
+                filename = f"detailed_overdues_{sel}_{as_of}.pdf"
+
+            if pdf and (isinstance(pdf, (bytes, str))) and len(pdf) > 0:
+                data = pdf if isinstance(pdf, (bytes, bytearray)) else pdf.encode('latin-1')
+                st.download_button("⬇️ تحميل PDF", data, filename, "application/pdf")
+            else:
+                st.error("فشل في إنشاء ملف PDF.")
+
+        if st.button("تسجيل الخروج"):
+            st.session_state.logged_in = False
+            st.rerun()
 
 if __name__ == "__main__":
     main()
