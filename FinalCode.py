@@ -361,13 +361,21 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     pdf.ln(5)
     pdf.cell(0, 5, f"Execution Date: {exe}", ln=0, align="L")
     pdf.ln(10)
-
+    if 'spid' not in df.columns:
+        df['spid'] = 0  # قيمة افتراضية للعملاء بدون Sales Person
+        
+    # معالجة القيم الفارغة في spid
+    df['spid'] = df['spid'].fillna(0)
+    
+    # تحويل spid إلى سلسلة إذا كانت تحتوي على قيم غير رقمية
+    if df['spid'].dtype != 'int64':
+        df['spid'] = df['spid'].astype(str).fillna('0')
     table_width = 120
     col_widths = [40, 80]
     pdf.set_xy(10, pdf.get_y())
     draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length, table_width, col_widths)
     pdf.ln(10)
-
+    
     name_w = 50
     bal_w = 60
     bucket_w = 60
@@ -375,18 +383,25 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     sub_w = bal_w / 2
     line_h = 7
     bottom_margin = 20
-
+    
     if sp_name == "All":
-        grouped = df.groupby("sp_id")
+        # التجميع باستخدام العمود الصحيح مع الاحتفاظ بالقيم الفارغة
+        grouped = df.groupby("spid", dropna=False)
     else:
         grouped = [(sp_name, df)]
 
     for sp_id, group in grouped:
-        sp_display_name = group["sp_name"].iloc[0] if sp_name == "All" else sp_name
-        pdf.set_xy(10, pdf.get_y())
-        pdf.cell(0, 5, reshape_text(f"Sales Person: {sp_display_name}"), border=0, ln=1, align="L")
-        pdf.ln(4)
-        draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w)
+        try:
+            # التعامل مع العملاء غير المربوطين
+            if sp_id in (0, '0', None):
+                sp_display_name = "غير محدد"
+            else:
+                sp_display_name = group["sp_name"].iloc[0] if sp_name == "All" else sp_name
+            
+            pdf.set_xy(10, pdf.get_y())
+            pdf.cell(0, 5, reshape_text(f"المندوب: {sp_display_name}"), border=0, ln=1, align="L")
+            pdf.ln(4)
+            draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w)
 
         for _, r in group.iterrows():
             row_h = line_h  # Start with minimum height
