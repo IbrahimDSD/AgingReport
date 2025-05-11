@@ -727,7 +727,7 @@ def main():
                 if bar_chart_gold:
                     st.image(bar_chart_gold)
 
-         if report_type == "Summary Report":
+        if report_type == "Summary Report":
             st.markdown("**المتأخرات**")
             columns = ["Code", "Customer", "total_gold_due", "total_cash_due"]
             for b in buckets:
