@@ -477,68 +477,74 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     return bytes(out) if isinstance(out, bytearray) else out
 
 def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer, grace, length):
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
-    pdf.add_page()
-    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
-    pdf.set_font('DejaVu', '', 12)
 
-    execution_date = datetime.now().strftime("%d/%m/%Y %H:%M %p")
-    pdf.set_xy(10, 10)
-    pdf.cell(0, 5, reshape_text(f"New Egypt Gold | تقرير تفصيلي للمتأخرات"), border=0, ln=0, align="R")
+        pdf = FPDF(orientation="P", unit="mm", format="A4")
+        pdf.add_page()
+        pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+        pdf.set_font('DejaVu', '', 12)
 
-    table_width = 120
-    col_widths = [40, 80]
-    pdf.set_xy(10, pdf.get_y())
-    draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length, table_width, col_widths)
-    pdf.ln(10)
+        execution_date = datetime.now().strftime("%d/%m/%Y %H:%M %p")
+        pdf.set_xy(10, 10)
+        pdf.cell(0, 5, reshape_text(f"New Egypt Gold | تقرير تفصيلي للمتأخرات"), border=0, ln=0, align="R")
+        pdf.cell(-50, 5, f"ITS-08223 / EGS", border=0, ln=0, align="R")
+        pdf.ln(5)
+        pdf.cell(0, 5, f"Execution Date: {execution_date}", border=0, ln=0, align="L")
+        pdf.cell(-50, 5, f"Page Number: 1/1", border=0, ln=0, align="R")
+        pdf.ln(10)
 
-    pdf.set_fill_color(200, 200, 200)
-    pdf.cell(0, 8, reshape_text("Customer Delays By Custom Range."), border=1, ln=1, align="C", fill=True)
-    pdf.cell(30, 5, reshape_text("Due Date:"), border=0, ln=0, align="L")
-    pdf.cell(30, 5, as_of.strftime("%d/%m/%Y"), border=0, ln=0, align="L")
-    pdf.ln(5)
+        table_width = 120
+        col_widths = [40, 80]
+        pdf.set_xy(10, pdf.get_y())
+        draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length, table_width, col_widths)
+        pdf.ln(10)
 
-    customers = set(summary_df["Customer"])
-    for customer in sorted(customers):
-        group = detail_df[detail_df["Customer Name"] == customer]
-        if not group.empty:  # Only include customers with overdue invoices
-            customer_summary = summary_df[summary_df["Customer"] == customer]
-            total_cash_due = customer_summary["total_cash_due"].iloc[0] if not customer_summary.empty else 0.0
-            total_gold_due = customer_summary["total_gold_due"].iloc[0] if not customer_summary.empty else 0.0
-            total_cash_overdue = customer_summary["cash_total"].iloc[0] if not customer_summary.empty else 0.0
-            total_gold_overdue = customer_summary["gold_total"].iloc[0] if not customer_summary.empty else 0.0
+        pdf.set_fill_color(200, 200, 200)
+        pdf.cell(0, 8, reshape_text("Customer Delays By Custom Range."), border=1, ln=1, align="C", fill=True)
+        pdf.cell(30, 5, reshape_text("Due Date:"), border=0, ln=0, align="L")
+        pdf.cell(30, 5, as_of.strftime("%d/%m/%Y"), border=0, ln=0, align="L")
+        pdf.ln(5)
 
-            pdf.set_xy(10, pdf.get_y())
-            pdf.multi_cell(0, 5, reshape_text(f"العميل: {customer}"), border=0, align="R")
-            pdf.set_xy(10, pdf.get_y())
-            pdf.set_text_color(0, 128, 0) if total_cash_due <= 0 else pdf.set_text_color(255, 0, 0)
-            pdf.cell(0, 5, reshape_text(f"إجمالي المديونية النقدية: {format_number(total_cash_due)}"), border=0,
-                     ln=1, align="R")
-            pdf.set_text_color(0, 128, 0) if total_gold_due <= 0 else pdf.set_text_color(0, 0, 255)
-            pdf.cell(0, 5, reshape_text(f"إجمالي المديونية الذهبية: {format_number(total_gold_due)}"), border=0,
-                     ln=1, align="R")
-            pdf.set_text_color(0, 0, 0)
-            pdf.cell(0, 5, reshape_text(f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}"), border=0,
-                     ln=1, align="R")
-            pdf.cell(0, 5, reshape_text(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)}"), border=0,
-                     ln=1, align="R")
-            pdf.ln(4)
+        customers = set(summary_df["Customer"])
+        for customer in sorted(customers):
+            group = detail_df[detail_df["Customer Name"] == customer]
+            if not group.empty:  # Only include customers with overdue invoices
+                customer_summary = summary_df[summary_df["Customer"] == customer]
+                total_cash_due = customer_summary["total_cash_due"].iloc[0] if not customer_summary.empty else 0.0
+                total_gold_due = customer_summary["total_gold_due"].iloc[0] if not customer_summary.empty else 0.0
+                total_cash_overdue = customer_summary["cash_total"].iloc[0] if not customer_summary.empty else 0.0
+                total_gold_overdue = customer_summary["gold_total"].iloc[0] if not customer_summary.empty else 0.0
 
-            headers = ["رقم الفاتورة", "تاريخ الفاتورة", "المتأخرة G21", "المتأخرة EGP", "عدد أيام التأخير"]
-            widths = [40, 40, 30, 30, 30]
-            for w, h in zip(widths, headers):
-                pdf.cell(w, 8, reshape_text(h), border=1, ln=0, align="C")
-            pdf.ln()
-            for _, row in group.iterrows():
-                pdf.cell(40, 10, reshape_text(row["Invoice Ref"]), border=1, align="C", ln=0)
-                pdf.cell(40, 10, str(row["Invoice Date"]), border=1, align="C", ln=0)
-                pdf.cell(30, 10, format_number(row["Overdue G21"]), border=1, align="R", ln=0)
-                pdf.cell(30, 10, format_number(row["Overdue EGP"]), border=1, align="R", ln=0)
-                pdf.cell(30, 10, str(row["Delay Days"]), border=1, align="R", ln=1)
-            pdf.ln(4)
+                pdf.set_xy(10, pdf.get_y())
+                pdf.multi_cell(0, 5, reshape_text(f"العميل: {customer}"), border=0, align="R")
+                pdf.set_xy(10, pdf.get_y())
+                pdf.set_text_color(0, 128, 0) if total_cash_due <= 0 else pdf.set_text_color(255, 0, 0)
+                pdf.cell(0, 5, reshape_text(f"إجمالي المديونية النقدية: {format_number(total_cash_due)}"), border=0,
+                         ln=1, align="R")
+                pdf.set_text_color(0, 128, 0) if total_gold_due <= 0 else pdf.set_text_color(0, 0, 255)
+                pdf.cell(0, 5, reshape_text(f"إجمالي المديونية الذهبية: {format_number(total_gold_due)}"), border=0,
+                         ln=1, align="R")
+                pdf.set_text_color(0, 0, 0)
+                pdf.cell(0, 5, reshape_text(f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}"), border=0,
+                         ln=1, align="R")
+                pdf.cell(0, 5, reshape_text(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)}"), border=0,
+                         ln=1, align="R")
+                pdf.ln(4)
 
-    pdf_output = pdf.output(dest='S')
-    return bytes(pdf_output) if isinstance(pdf_output, (bytes, bytearray)) else pdf_output
+                headers = ["رقم الفاتورة", "تاريخ الفاتورة", "المتأخرة G21", "المتأخرة EGP", "عدد أيام التأخير"]
+                widths = [40, 40, 30, 30, 30]
+                for w, h in zip(widths, headers):
+                    pdf.cell(w, 8, reshape_text(h), border=1, ln=0, align="C")
+                pdf.ln()
+                for _, row in group.iterrows():
+                    pdf.cell(40, 10, reshape_text(row["Invoice Ref"]), border=1, align="C", ln=0)
+                    pdf.cell(40, 10, str(row["Invoice Date"]), border=1, align="C", ln=0)
+                    pdf.cell(30, 10, format_number(row["Overdue G21"]), border=1, align="R", ln=0)
+                    pdf.cell(30, 10, format_number(row["Overdue EGP"]), border=1, align="R", ln=0)
+                    pdf.cell(30, 10, str(row["Delay Days"]), border=1, align="R", ln=1)
+                pdf.ln(4)
+
+        pdf_output = pdf.output(dest='S')
+        return bytes(pdf_output) if isinstance(pdf_output, bytearray) else pdf_output
 
 # ----------------- Chart Generation Functions -----------------
 def setup_arabic_font():
