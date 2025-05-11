@@ -477,7 +477,7 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     return bytes(out) if isinstance(out, bytearray) else out
 
 def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer, grace, length):
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf = FPDF(orientation="P", unit="mm", format="A3")
     pdf.add_page()
     pdf.add_font('DejaVu', '', "DejaVuSans.ttf", uni=True)
     pdf.set_font('DejaVu', '', 12)
@@ -532,9 +532,9 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
         gold_lbl2 = reshape_text(f"إجمالي المديونية الذهبية: {format_number(total_gold_due)} G21")
         cash_lbl2 = reshape_text(f"إجمالي المديونية النقدية: {format_number(total_cash_due)} EGP")
         pdf.set_text_color(0, 0, 255)
-        pdf.cell(0, 6, gold_lbl2, border=0, ln=0, align="R")
+        pdf.cell(0, 6, gold_lbl2, border=0, ln=0, align="L")
         pdf.set_text_color(255, 0, 0)
-        pdf.cell(0, 6, cash_lbl2, border=0, ln=1, align="R")
+        pdf.cell(0, 6, cash_lbl2, border=0, ln=1, align="L")
         pdf.set_text_color(0, 0, 0)
         pdf.ln(4)
 
