@@ -159,7 +159,7 @@ def get_salespersons(_engine):
 def get_customers(_engine, sp_id):
     if sp_id is None:
         sql = """
-            SELECT DISTINCT acc.recordid, acc.name, acc.spid, COALESCE(sasp.name, ' ') AS sp_name
+            SELECT DISTINCT acc.recordid, acc.name, acc.spid, COALESCE(sasp.name, '') AS sp_name
             FROM fiacc acc
             LEFT JOIN sasp ON acc.spid = sasp.recordid
             WHERE acc.groupid = 1
@@ -394,7 +394,7 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
                 sp_display_name = group["sp_name"].iloc[0] if sp_name == "All" else sp_name
 
             pdf.set_xy(10, pdf.get_y())
-            pdf.cell(0, 5, reshape_text(f"اSales Person: {sp_display_name}"), border=0, ln=1, align="L")
+            pdf.cell(0, 5, reshape_text(f"Sales Person: {sp_display_name}"), border=0, ln=1, align="L")
             pdf.ln(4)
             draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w)
 
