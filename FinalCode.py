@@ -150,17 +150,16 @@ def bucketize(days, grace, length):
     return f">{grace + 3 * length}"
 
 def format_number(value):
-    """Format numbers for display."""
     try:
-        value = float(value)
+        value = round(float(value), 2)  # تقريب القيمة إلى رقمين عشريين
         if value < 0:
-            return f"({abs(value):,.2f})"
+            return f"({abs(value):,.2f})"  # تنسيق الأرقام السالبة بين قوسين
         elif value == 0:
-            return "-"
+            return "-"  # عرض الصفر كشرطة
         else:
-            return f"{value:,.2f}"
+            return f"{value:,.2f}"  # تنسيق الأرقام الموجبة مع فاصلة للآلاف
     except (ValueError, TypeError):
-        return str(value)
+        return str(value)  # إرجاع القيمة كنص إذا لم تكن رقمية
 
 # ----------------- Data Fetching Functions -----------------
 @st.cache_data(ttl=600)
