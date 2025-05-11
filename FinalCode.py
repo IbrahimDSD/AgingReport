@@ -12,6 +12,7 @@ import os
 import matplotlib.pyplot as plt
 from io import BytesIO
 import matplotlib.font_manager as fm
+import sqlitecloud
 
 # تعريف URI قاعدة بيانات المستخدمين
 USER_DB_URI = (
