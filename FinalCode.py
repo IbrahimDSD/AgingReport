@@ -352,7 +352,7 @@ def draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length,
 def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, length):
     pdf = FPDF(orientation="L", unit="mm", format="A3")
     pdf.add_page()
-    pdf.add_font('DejaVu', '', r'D:\FinalCode-main\FinalCode-main\dejavu-sans\DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', '','DejaVuSans.ttf', uni=True)
     pdf.set_font('DejaVu', '', 12)
 
     exe = datetime.now().strftime("%d/%m/%Y %I:%M %p")
@@ -421,7 +421,7 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
             # Check for page break
             if pdf.get_y() + row_h + bottom_margin > pdf.h:
                 pdf.add_page()
-                pdf.add_font('DejaVu', '', 'D:\FinalCode-main\FinalCode-main\dejavu-sans\DejaVuSans.ttf', uni=True)
+                pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
                 pdf.set_font('DejaVu', '', 12)
                 pdf.cell(0, 5, reshape_text(f"Sales Person: {sp_display_name}"), border=0, ln=1, align="L")
                 pdf.ln(4)
@@ -476,7 +476,7 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
 def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer, grace, length):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
-    pdf.add_font('DejaVu', '', r'D:\FinalCode-main\FinalCode-main\dejavu-sans\DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
     pdf.set_font('DejaVu', '', 12)
 
     execution_date = datetime.now().strftime("%d/%m/%Y %H:%M %p")
