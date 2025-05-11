@@ -563,6 +563,7 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
     return pdf_output if isinstance(pdf_output, (bytes, bytearray)) else pdf_output.encode('latin-1')
 
 
+
 # ----------------- Chart Generation Functions -----------------
 def setup_arabic_font():
     font_path = "DejaVuSans.ttf"
