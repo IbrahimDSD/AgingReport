@@ -8,4 +8,4 @@ arabic-reshaper>=2.1.0
 python-bidi>=0.4.2
 matplotlib>=3.5.0
 sqlalchemy-sqlitecloud
-passlib.hash
+passlib
