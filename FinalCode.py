@@ -142,11 +142,11 @@ def format_number(value):
     try:
         value = round(float(value), 3)
         if value < 0:
-            return f"({abs(value):,.f})"
+            return f"({abs(value):,.3f})"
         elif value == 0:
             return "-"
         else:
-            return f"{value:,.f}"
+            return f"{value:,.3f}"
     except (ValueError, TypeError):
         return str(value)
 
