@@ -432,7 +432,7 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
         pdf.ln(10)
 
     out = pdf.output(dest="S")
-    return bytes(out) if isinstance(out, bytearray) else outs
+    return bytes(out) if isinstance(out, bytearray) else out
 
 
 def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer, grace, length):
