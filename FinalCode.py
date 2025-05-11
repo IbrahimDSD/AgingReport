@@ -554,7 +554,7 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
             pdf.cell(30, 10, str(row["Delay Days"]), border=1, align="R", ln=1)
         pdf.ln(6)
     pdf_output = pdf.output(dest='S')
-    return pdf_output if isinstance(pdf_output, (bytes, bytearray)) else pdf_output.encode('latin-1')
+    return pdf_output if isinstance(pdf_output, (bytes, bytearray)) else pdf_output
 
 # ----------------- Chart Generation Functions -----------------
 def setup_arabic_font():
