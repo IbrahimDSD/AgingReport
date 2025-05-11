@@ -352,30 +352,25 @@ def draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length,
 def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, length):
     pdf = FPDF(orientation="L", unit="mm", format="A3")
     pdf.add_page()
-    pdf.add_font('DejaVu', '','DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
     pdf.set_font('DejaVu', '', 12)
 
     exe = datetime.now().strftime("%d/%m/%Y %I:%M %p")
     pdf.set_xy(10, 10)
-    pdf.cell(0, 5, reshape_text("New Egypt Gold | تقرير متأخرات"), ln=0, align="c")
+    pdf.cell(0, 5, reshape_text("New Egypt Gold | تقرير المتأخرات"), ln=0, align="C")
     pdf.ln(5)
     pdf.cell(0, 5, f"Execution Date: {exe}", ln=0, align="L")
     pdf.ln(10)
-    if 'spid' not in df.columns:
-        df['spid'] = 0  # قيمة افتراضية للعملاء بدون Sales Person
-        
-    # معالجة القيم الفارغة في spid
-    df['spid'] = df['spid'].fillna(0)
-    
-    # تحويل spid إلى سلسلة إذا كانت تحتوي على قيم غير رقمية
-    if df['spid'].dtype != 'int64':
-        df['spid'] = df['spid'].astype(str).fillna('0')
+
+    # معالجة البيانات المفقودة
+    df['spid'] = df['spid'].fillna(0).astype(int)
+
     table_width = 120
     col_widths = [40, 80]
     pdf.set_xy(10, pdf.get_y())
     draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length, table_width, col_widths)
     pdf.ln(10)
-    
+
     name_w = 50
     bal_w = 60
     bucket_w = 60
@@ -383,109 +378,102 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     sub_w = bal_w / 2
     line_h = 7
     bottom_margin = 20
-    
+
     if sp_name == "All":
-        # التجميع باستخدام العمود الصحيح مع الاحتفاظ بالقيم الفارغة
         grouped = df.groupby("spid", dropna=False)
     else:
         grouped = [(sp_name, df)]
 
     for sp_id, group in grouped:
-        
-            # التعامل مع العملاء غير المربوطين
+        try:
             if sp_id in (0, '0', None):
                 sp_display_name = "غير محدد"
             else:
                 sp_display_name = group["sp_name"].iloc[0] if sp_name == "All" else sp_name
-            
+
             pdf.set_xy(10, pdf.get_y())
             pdf.cell(0, 5, reshape_text(f"المندوب: {sp_display_name}"), border=0, ln=1, align="L")
             pdf.ln(4)
             draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w)
 
-        for _, r in group.iterrows():
-            row_h = line_h  # Start with minimum height
-            # Calculate height for total_gold_due
-            lines_g21 = pdf.multi_cell(sub_w, line_h, format_number(r["total_gold_due"]), border=0, align="R",
-                                       split_only=True)
-            g21_h = len(lines_g21) * line_h
-            row_h = max(row_h, g21_h)
-            # Calculate height for total_cash_due
-            lines_egp = pdf.multi_cell(sub_w, line_h, format_number(r["total_cash_due"]), border=0, align="R",
-                                       split_only=True)
-            egp_h = len(lines_egp) * line_h
-            row_h = max(row_h, egp_h)
-            # Calculate heights for each bucket
-            for b in buckets:
-                lines_gold = pdf.multi_cell(sub_w, line_h, format_number(r[f"gold_{b}"]), border=0, align="R",
-                                            split_only=True)
-                gold_h = len(lines_gold) * line_h
-                lines_cash = pdf.multi_cell(sub_w, line_h, format_number(r[f"cash_{b}"]), border=0, align="R",
-                                            split_only=True)
-                cash_h = len(lines_cash) * line_h
-                row_h = max(row_h, gold_h, cash_h)
-            # Calculate heights for totals
-            lines_tot_g21 = pdf.multi_cell(sub_w, line_h, format_number(r["gold_total"]), border=0, align="R",
-                                           split_only=True)
-            tot_g21_h = len(lines_tot_g21) * line_h
-            lines_tot_egp = pdf.multi_cell(sub_w, line_h, format_number(r["cash_total"]), border=0, align="R",
-                                           split_only=True)
-            tot_egp_h = len(lines_tot_egp) * line_h
-            row_h = max(row_h, tot_g21_h, tot_egp_h)
+            for _, r in group.iterrows():
+                row_h = line_h
+                g21_h = pdf.multi_cell(sub_w, line_h, format_number(r["total_gold_due"]), border=0, align="R",
+                                       dry_run=True)
+                row_h = max(row_h, g21_h)
+                egp_h = pdf.multi_cell(sub_w, line_h, format_number(r["total_cash_due"]), border=0, align="R",
+                                       dry_run=True)
+                row_h = max(row_h, egp_h)
+                for b in buckets:
+                    gold_h = pdf.multi_cell(sub_w, line_h, format_number(r[f"gold_{b}"]), border=0, align="R",
+                                            dry_run=True)
+                    cash_h = pdf.multi_cell(sub_w, line_h, format_number(r[f"cash_{b}"]), border=0, align="R",
+                                            dry_run=True)
+                    row_h = max(row_h, gold_h, cash_h)
+                tot_g21_h = pdf.multi_cell(sub_w, line_h, format_number(r["gold_total"]), border=0, align="R",
+                                           dry_run=True)
+                tot_egp_h = pdf.multi_cell(sub_w, line_h, format_number(r["cash_total"]), border=0, align="R",
+                                           dry_run=True)
+                row_h = max(row_h, tot_g21_h, tot_egp_h)
 
-            # Check for page break
-            if pdf.get_y() + row_h + bottom_margin > pdf.h:
-                pdf.add_page()
-                pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
-                pdf.set_font('DejaVu', '', 12)
-                pdf.cell(0, 5, reshape_text(f"Sales Person: {sp_display_name}"), border=0, ln=1, align="L")
-                pdf.ln(4)
-                draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w)
+                if pdf.get_y() + row_h + bottom_margin > pdf.h:
+                    pdf.add_page()
+                    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+                    pdf.set_font('DejaVu', '', 12)
+                    pdf.cell(0, 5, reshape_text(f"Sales Person: {sp_display_name}"), border=0, ln=1, align="L")
+                    pdf.ln(4)
+                    draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w)
 
-            x0, y0 = pdf.get_x(), pdf.get_y()
+                x0, y0 = pdf.get_x(), pdf.get_y()
+                heights = []
+                customer_name = reshape_text(r["Customer"])
+                if pdf.get_string_width(customer_name) > name_w - 2:
+                    customer_name = truncate_text(pdf, customer_name, name_w - 2)
+                pdf.cell(name_w, line_h, customer_name, border=1, align="L", ln=0)
+                heights.append(line_h)
 
-            # Draw Customer Name
-            customer_name = reshape_text(r["Customer"])
-            if pdf.get_string_width(customer_name) > name_w - 2:
-                customer_name = truncate_text(pdf, customer_name, name_w - 2)
-            pdf.cell(name_w, line_h, customer_name, border=1, align="L", ln=0)
+                pdf.set_xy(x0 + name_w, y0)
+                color = (0, 128, 0) if r["total_gold_due"] <= 0 else (0, 0, 255)
+                pdf.set_text_color(*color)
+                pdf.multi_cell(sub_w, line_h, format_number(r["total_gold_due"]), border=1, align="R")
+                heights.append(pdf.get_y() - y0)
 
-            # Draw Total Gold Due
-            pdf.set_xy(x0 + name_w, y0)
-            color = (0, 128, 0) if r["total_gold_due"] <= 0 else (0, 0, 255)
-            pdf.set_text_color(*color)
-            pdf.multi_cell(sub_w, line_h, format_number(r["total_gold_due"]), border=1, align="R")
-            pdf.set_text_color(0, 0, 0)
+                pdf.set_xy(x0 + name_w + sub_w, y0)
+                color = (0, 128, 0) if r["total_cash_due"] <= 0 else (255, 0, 0)
+                pdf.set_text_color(*color)
+                pdf.multi_cell(sub_w, line_h, format_number(r["total_cash_due"]), border=1, align="R")
+                heights.append(pdf.get_y() - y0)
+                pdf.set_text_color(0, 0, 0)
 
-            # Draw Total Cash Due
-            pdf.set_xy(x0 + name_w + sub_w, y0)
-            color = (0, 128, 0) if r["total_cash_due"] <= 0 else (255, 0, 0)
-            pdf.set_text_color(*color)
-            pdf.multi_cell(sub_w, line_h, format_number(r["total_cash_due"]), border=1, align="R")
-            pdf.set_text_color(0, 0, 0)
+                x_b = x0 + name_w + bal_w
+                for i, b in enumerate(buckets):
+                    pdf.set_xy(x_b + i * bucket_w, y0)
+                    pdf.multi_cell(sub_w, line_h, format_number(r[f"gold_{b}"]), border=1, align="R")
+                    heights.append(pdf.get_y() - y0)
+                    pdf.set_xy(x_b + i * bucket_w + sub_w, y0)
+                    pdf.multi_cell(sub_w, line_h, format_number(r[f"cash_{b}"]), border=1, align="R")
+                    heights.append(pdf.get_y() - y0)
 
-            # Draw Buckets
-            x_b = x0 + name_w + bal_w
-            for i, b in enumerate(buckets):
-                pdf.set_xy(x_b + i * bucket_w, y0)
-                pdf.multi_cell(sub_w, line_h, format_number(r[f"gold_{b}"]), border=1, align="R")
-                pdf.set_xy(x_b + i * bucket_w + sub_w, y0)
-                pdf.multi_cell(sub_w, line_h, format_number(r[f"cash_{b}"]), border=1, align="R")
+                x_t = x_b + len(buckets) * bucket_w
+                pdf.set_xy(x_t, y0)
+                pdf.multi_cell(sub_w, line_h, format_number(r["gold_total"]), border=1, align="R")
+                heights.append(pdf.get_y() - y0)
+                pdf.set_xy(x_t + sub_w, y0)
+                pdf.multi_cell(sub_w, line_h, format_number(r["cash_total"]), border=1, align="R")
+                heights.append(pdf.get_y() - y0)
 
-            # Draw Totals
-            x_t = x_b + len(buckets) * bucket_w
-            pdf.set_xy(x_t, y0)
-            pdf.multi_cell(sub_w, line_h, format_number(r["gold_total"]), border=1, align="R")
-            pdf.set_xy(x_t + sub_w, y0)
-            pdf.multi_cell(sub_w, line_h, format_number(r["cash_total"]), border=1, align="R")
+                row_h = max(heights)
+                pdf.set_xy(x0, y0 + row_h)
 
-            # Move to the next row position
-            pdf.set_xy(x0, y0 + row_h)
+            pdf.ln(10)
 
-        pdf.ln(10)
+        except Exception as e:
+            st.error(f"خطأ في إنشاء التقرير: {str(e)}")
+            continue
 
     out = pdf.output(dest="S")
     return bytes(out) if isinstance(out, bytearray) else out
+
 
 
 def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer, grace, length):
