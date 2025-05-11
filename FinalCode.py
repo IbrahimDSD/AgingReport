@@ -727,104 +727,103 @@ def main():
                 if bar_chart_gold:
                     st.image(bar_chart_gold)
 
-        if report_type == "Summary Report":
-            st.markdown("**المتأخرات**")
-            columns = ["Code", "Customer", "total_gold_due", "total_cash_due"]
-            for b in buckets:
-                columns.append(f"gold_{b}")
-                columns.append(f"cash_{b}")
-            columns.extend(["gold_total", "cash_total"])
+            if report_type == "Summary Report":
+                st.markdown("**المتأخرات**")
+                columns = ["Code", "Customer", "total_gold_due", "total_cash_due"]
+                for b in buckets:
+                    columns.append(f"gold_{b}")
+                    columns.append(f"cash_{b}")
+                columns.extend(["gold_total", "cash_total"])
 
-            display_df = summary_df[columns].copy()
-            display_df["total_gold_due"] = display_df["total_gold_due"].apply(format_number)
-            display_df["total_cash_due"] = display_df["total_cash_due"].apply(format_number)
-            display_df["gold_total"] = display_df["gold_total"].apply(format_number)
-            display_df["cash_total"] = display_df["cash_total"].apply(format_number)
-            for b in buckets:
-                display_df[f"gold_{b}"] = display_df[f"gold_{b}"].apply(format_number)
-                display_df[f"cash_{b}"] = display_df[f"cash_{b}"].apply(format_number)
+                display_df = summary_df[columns].copy()
+                display_df["total_gold_due"] = display_df["total_gold_due"].apply(format_number)
+                display_df["total_cash_due"] = display_df["total_cash_due"].apply(format_number)
+                display_df["gold_total"] = display_df["gold_total"].apply(format_number)
+                display_df["cash_total"] = display_df["cash_total"].apply(format_number)
+                for b in buckets:
+                    display_df[f"gold_{b}"] = display_df[f"gold_{b}"].apply(format_number)
+                    display_df[f"cash_{b}"] = display_df[f"cash_{b}"].apply(format_number)
 
-            column_mapping = {
-                "Code": "Customer Ref",
-                "Customer": "Customer Name",
-                "total_gold_due": "Total G21 Balance",
-                "total_cash_due": "Total EGP Balance",
-                "gold_total": "Total G21 Delay",
-                "cash_total": "Total EGP Delay"
-            }
-            for b in buckets:
-                display_label = f"من {b.replace('-', ' إلى ').replace('>', 'أكبر من ')} يوم"
-                column_mapping[f"gold_{b}"] = f"{display_label} G21"
-                column_mapping[f"cash_{b}"] = f"{display_label} EGP"
+                column_mapping = {
+                    "Code": "Customer Ref",
+                    "Customer": "Customer Name",
+                    "total_gold_due": "Total G21 Balance",
+                    "total_cash_due": "Total EGP Balance",
+                    "gold_total": "Total G21 Delay",
+                    "cash_total": "Total EGP Delay"
+                }
+                for b in buckets:
+                    display_label = f"من {b.replace('-', ' إلى ').replace('>', 'أكبر من ')} يوم"
+                    column_mapping[f"gold_{b}"] = f"{display_label} G21"
+                    column_mapping[f"cash_{b}"] = f"{display_label} EGP"
 
-            def highlight_negatives(s):
-                if s.name in ["Total G21 Balance", "Total EGP Balance"]:
-                    return ['background-color: red' if v.startswith('(') else '' for v in s]
-                return [''] * len(s)
+                def highlight_negatives(s):
+                    if s.name in ["Total G21 Balance", "Total EGP Balance"]:
+                        return ['background-color: red' if v.startswith('(') else '' for v in s]
+                    return [''] * len(s)
 
-            st.dataframe(
-                display_df.rename(columns=column_mapping).style.apply(highlight_negatives, axis=0),
-                use_container_width=True
-            )
+                st.dataframe(
+                    display_df.rename(columns=column_mapping).style.apply(highlight_negatives, axis=0),
+                    use_container_width=True
+                )
 
-            pdf = build_summary_pdf(summary_df, sel, as_of, buckets, selected_customer, grace, length)
-            filename = f"summary_overdues_{sel}_{as_of}.pdf"
+                pdf = build_summary_pdf(summary_df, sel, as_of, buckets, selected_customer, grace, length)
+                filename = f"summary_overdues_{sel}_{as_of}.pdf"
 
-        else:
-            st.subheader("تفاصيل متأخرات العملاء")
-            customers = set(summary_df["Customer"])
-            if customers:
-                st.markdown("**تفاصيل الفواتير المتأخرة (بعد فترة السماحية)**")
-                for customer in sorted(customers):
-                    group = detail_df[detail_df["Customer Name"] == customer]
-                    if not group.empty:  # Only include customers with overdue invoices
-                        customer_summary = summary_df[summary_df["Customer"] == customer]
-                        total_cash_due = customer_summary["total_cash_due"].iloc[
-                            0] if not customer_summary.empty else 0.0
-                        total_gold_due = customer_summary["total_gold_due"].iloc[
-                            0] if not customer_summary.empty else 0.0
-                        total_cash_overdue = customer_summary["cash_total"].iloc[
-                            0] if not customer_summary.empty else 0.0
-                        total_gold_overdue = customer_summary["gold_total"].iloc[
-                            0] if not customer_summary.empty else 0.0
-
-                        st.markdown(
-                            f"**العميل: {customer} (كود: {customer_summary['Code'].iloc[0] if not customer_summary.empty else '-'})**")
-                        color_cash = "green" if total_cash_due <= 0 else "red"
-                        color_gold = "green" if total_gold_due <= 0 else "blue"
-                        st.markdown(
-                            f"<span style='color: {color_gold};'>إجمالي المديونية الذهبية: {format_number(total_gold_due)}</span> | "
-                            f"<span style='color: {color_cash};'>إجمالي المديونية النقدية: {format_number(total_cash_due)}</span>",
-                            unsafe_allow_html=True)
-                        st.markdown(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)} | "
-                                    f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}",
-                                    unsafe_allow_html=True)
-
-                        display_group = group[
-                            ["Invoice Ref", "Invoice Date", "Overdue G21", "Overdue EGP", "Delay Days"]].copy()
-                        display_group["Overdue G21"] = display_group["Overdue G21"].apply(format_number)
-                        display_group["Overdue EGP"] = display_group["Overdue EGP"].apply(format_number)
-                        st.dataframe(
-                            display_group.rename(columns={
-                                "Invoice Ref": "Invoice Ref",
-                                "Invoice Date": "Invoice Date",
-                                "Overdue G21": "G21 Delay",
-                                "Overdue EGP": "EGP Delay",
-                                "Delay Days": "Delay Days"
-                            }),
-                            use_container_width=True
-                        )
             else:
-                st.warning("لا توجد فواتير متأخرة أو أرصدة.")
+                st.subheader("تفاصيل متأخرات العملاء")
+                customers = set(summary_df["Customer"])
+                if customers:
+                    st.markdown("**تفاصيل الفواتير المتأخرة (بعد فترة السماحية)**")
+                    for customer in sorted(customers):
+                        group = detail_df[detail_df["Customer Name"] == customer]
+                        if not group.empty:  # Only include customers with overdue invoices
+                            customer_summary = summary_df[summary_df["Customer"] == customer]
+                            total_cash_due = customer_summary["total_cash_due"].iloc[
+                                0] if not customer_summary.empty else 0.0
+                            total_gold_due = customer_summary["total_gold_due"].iloc[
+                                0] if not customer_summary.empty else 0.0
+                            total_cash_overdue = customer_summary["cash_total"].iloc[
+                                0] if not customer_summary.empty else 0.0
+                            total_gold_overdue = customer_summary["gold_total"].iloc[
+                                0] if not customer_summary.empty else 0.0
 
-            pdf = build_detailed_pdf(detail_df, summary_df, sel, as_of, selected_customer, grace, length)
-            filename = f"detailed_overdues_{sel}_{as_of}.pdf"
+                            st.markdown(
+                                f"**العميل: {customer} (كود: {customer_summary['Code'].iloc[0] if not customer_summary.empty else '-'})**")
+                            color_cash = "green" if total_cash_due <= 0 else "red"
+                            color_gold = "green" if total_gold_due <= 0 else "blue"
+                            st.markdown(
+                                f"<span style='color: {color_gold};'>إجمالي المديونية الذهبية: {format_number(total_gold_due)}</span> | "
+                                f"<span style='color: {color_cash};'>إجمالي المديونية النقدية: {format_number(total_cash_due)}</span>",
+                                unsafe_allow_html=True)
+                            st.markdown(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)} | "
+                                        f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}",
+                                        unsafe_allow_html=True)
 
-        if pdf and (isinstance(pdf, (bytes, str))) and len(pdf) > 0:
-            data = pdf if isinstance(pdf, (bytes, bytearray)) else pdf.encode('latin-1')
-            st.download_button("⬇️ تحميل PDF", data, filename, "application/pdf")
-        else:
-            st.error(...)
+                            display_group = group[
+                                ["Invoice Ref", "Invoice Date", "Overdue G21", "Overdue EGP", "Delay Days"]].copy()
+                            display_group["Overdue G21"] = display_group["Overdue G21"].apply(format_number)
+                            display_group["Overdue EGP"] = display_group["Overdue EGP"].apply(format_number)
+                            st.dataframe(
+                                display_group.rename(columns={
+                                    "Invoice Ref": "Invoice Ref",
+                                    "Invoice Date": "Invoice Date",
+                                    "Overdue G21": "G21 Delay",
+                                    "Overdue EGP": "EGP Delay",
+                                    "Delay Days": "Delay Days"
+                                }),
+                                use_container_width=True
+                            )
+                else:
+                    st.warning("لا توجد فواتير متأخرة أو أرصدة.")
+
+                pdf = build_detailed_pdf(detail_df, summary_df, sel, as_of, selected_customer, grace, length)
+                filename = f"detailed_overdues_{sel}_{as_of}.pdf"
+
+            if pdf and isinstance(pdf, bytes) and len(pdf) > 0:
+                st.download_button("⬇️ تحميل PDF", pdf, filename, "application/pdf")
+            else:
+                st.error("فشل في إنشاء ملف PDF. تحقق من مسار الخط أو البيانات.")
 
 if __name__ == "__main__":
     main()
