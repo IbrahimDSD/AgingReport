@@ -364,8 +364,7 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     pdf.cell(0, 5, f"Execution Date: {exe}", ln=0, align="L")
     pdf.ln(10)
 
-    # معالجة البيانات المفقودة
-    df['spid'] = df['spid'].fillna(0).astype(int)
+    
 
     table_width = 120
     col_widths = [40, 80]
@@ -382,9 +381,10 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     bottom_margin = 20
 
     if sp_name == "All":
-        grouped = df.groupby("spid", dropna=False)
+       # نجمع حسب الاسم وليس الـ ID
+      grouped = df.groupby("sp_name", dropna=False)
     else:
-        grouped = [(sp_name, df)]
+       grouped = [(sp_name, df)]
 
     for sp_id, group in grouped:
         try:
