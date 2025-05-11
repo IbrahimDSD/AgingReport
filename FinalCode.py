@@ -389,7 +389,7 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     for sp_id, group in grouped:
         try:
             if sp_id in (0, '0', None):
-                sp_display_name = ""
+                sp_display_name = " "
             else:
                 sp_display_name = group["sp_name"].iloc[0] if sp_name == "All" else sp_name
 
