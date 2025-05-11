@@ -140,7 +140,7 @@ def bucketize(days, grace, length):
 
 def format_number(value):
     try:
-        value = round(float(value), 2)
+        value = round(float(value), 3)
         if value < 0:
             return f"({abs(value):,.2f})"
         elif value == 0:
@@ -159,7 +159,7 @@ def get_salespersons(_engine):
 def get_customers(_engine, sp_id):
     if sp_id is None:
         sql = """
-            SELECT DISTINCT acc.recordid, acc.name, acc.spid, COALESCE(sasp.name, 'غير محدد') AS sp_name
+            SELECT DISTINCT acc.recordid, acc.name, acc.spid, COALESCE(sasp.name, ' ') AS sp_name
             FROM fiacc acc
             LEFT JOIN sasp ON acc.spid = sasp.recordid
             WHERE acc.groupid = 1
@@ -337,11 +337,11 @@ def draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w):
 
 def draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length, table_width, col_widths):
     parameters = [
-        ("المندوب", sp_name),
-        ("العميل", selected_customer),
-        ("تاريخ الاستحقاق", as_of.strftime('%d/%m/%Y')),
-        ("فترة السماحية", f"{grace} يوم"),
-        ("مدة الفترة", f"{length} يوم")
+        ("Sales Person", sp_name),
+        ("Customer Name", selected_customer),
+        ("Due Date", as_of.strftime('%d/%m/%Y')),
+        ("Grace Period", f"{grace} يوم"),
+        ("Period Lenght", f"{length} يوم")
     ]
     pdf.set_fill_color(200, 200, 200)
     pdf.cell(col_widths[0], 8, reshape_text("المعامل"), border=1, align="C", fill=True, ln=0)
@@ -389,7 +389,7 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     for sp_id, group in grouped:
         try:
             if sp_id in (0, '0', None):
-                sp_display_name = "غير محدد"
+                sp_display_name = ""
             else:
                 sp_display_name = group["sp_name"].iloc[0] if sp_name == "All" else sp_name
 
