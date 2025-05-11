@@ -8,7 +8,7 @@ from fpdf import FPDF
 import arabic_reshaper
 from bidi.algorithm import get_display
 from collections import deque
-import os
+from passlib.hash import pbkdf2_sha256
 import matplotlib.pyplot as plt
 from io import BytesIO
 import matplotlib.font_manager as fm
@@ -50,6 +50,17 @@ def get_user_record(username: str):
         conn.close()
         return rec
     return None
+
+
+def check_login(username: str, password: str) -> bool:
+    """
+    Look up a user record and verify the password hash.
+    """
+    rec = get_user_record(username)
+    if not rec:
+        return False
+    user_id, pw_hash, permissions, role = rec
+    return pbkdf2_sha256.verify(password, pw_hash)
 
 
 # ----------------- Helper Functions -----------------
