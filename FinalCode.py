@@ -214,6 +214,7 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
     for acc, grp in raw.groupby("accountid"):
         code = grp["code"].iat[0]
         name = grp["name"].iat[0]
+        spid = grp["spid"].iat[0]
         sp_name = grp["sp_name"].iat[0]
 
         cash_debits = []
