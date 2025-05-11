@@ -476,8 +476,6 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     out = pdf.output(dest="S")
     return bytes(out) if isinstance(out, bytearray) else out
 
-
-
 def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer, grace, length):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
@@ -779,7 +777,7 @@ def main():
                 st.subheader("تفاصيل متأخرات العملاء")
                 customers = set(summary_df["Customer"])
                 if customers:
-                    st.markdown("**تفاصيل الفواتير المتأخرة (بعد فترة السماحية)**")
+                    st.markdown("**تفاصيل الفواتير المتأخرة (بعد فترة السماح)**")
                     for customer in sorted(customers):
                         group = detail_df[detail_df["Customer Name"] == customer]
                         if not group.empty:  # Only include customers with overdue invoices
@@ -798,10 +796,10 @@ def main():
                             color_cash = "green" if total_cash_due <= 0 else "red"
                             color_gold = "green" if total_gold_due <= 0 else "blue"
                             st.markdown(
-                                f"<span style='color: {color_gold};'>إجمالي المديونية الذهبية: {format_number(total_gold_due)}</span> | "
+                                f"<span style='color: {color_gold};'>إجمالي المديونية الذهبية: {format_number(total_gold_due)}</span>  | "
                                 f"<span style='color: {color_cash};'>إجمالي المديونية النقدية: {format_number(total_cash_due)}</span>",
                                 unsafe_allow_html=True)
-                            st.markdown(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)} | "
+                            st.markdown(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)}  | "
                                         f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}",
                                         unsafe_allow_html=True)
 
