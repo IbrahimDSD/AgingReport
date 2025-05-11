@@ -142,11 +142,11 @@ def format_number(value):
     try:
         value = round(float(value), 3)
         if value < 0:
-            return f"({abs(value):,.2f})"
+            return f"({abs(value):,.f})"
         elif value == 0:
             return "-"
         else:
-            return f"{value:,.2f}"
+            return f"{value:,.f}"
     except (ValueError, TypeError):
         return str(value)
 
@@ -485,10 +485,8 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
     execution_date = datetime.now().strftime("%d/%m/%Y %H:%M %p")
     pdf.set_xy(10, 10)
     pdf.cell(0, 5, reshape_text(f"New Egypt Gold | تقرير تفصيلي للمتأخرات"), border=0, ln=0, align="R")
-    pdf.cell(-50, 5, f"ITS-08223 / EGS", border=0, ln=0, align="R")
     pdf.ln(5)
     pdf.cell(0, 5, f"Execution Date: {execution_date}", border=0, ln=0, align="L")
-    pdf.cell(-50, 5, f"Page Number: 1/1", border=0, ln=0, align="R")
     pdf.ln(10)
 
     table_width = 120
@@ -525,18 +523,18 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
         gold_lbl = reshape_text(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)} G21")
         cash_lbl = reshape_text(f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)} EGP")
         pdf.set_text_color(0, 0, 255)  # لون الذهب
-        pdf.cell(0, 6, gold_lbl, border=0, ln=0, align="L")
+        pdf.cell(0, 6, gold_lbl, border=0, ln=0, align="R")
         pdf.set_text_color(255, 0, 0)  # لون الكاش
-        pdf.cell(0, 6, cash_lbl, border=0, ln=1, align="L")
+        pdf.cell(0, 6, cash_lbl, border=0, ln=1, align="R")
         pdf.ln(1)
 
         # --- سطر إجمالي المديونية: ذهب ثم نقداً ---
         gold_lbl2 = reshape_text(f"إجمالي المديونية الذهبية: {format_number(total_gold_due)} G21")
         cash_lbl2 = reshape_text(f"إجمالي المديونية النقدية: {format_number(total_cash_due)} EGP")
         pdf.set_text_color(0, 0, 255)
-        pdf.cell(0, 6, gold_lbl2, border=0, ln=0, align="L")
+        pdf.cell(0, 6, gold_lbl2, border=0, ln=0, align="R")
         pdf.set_text_color(255, 0, 0)
-        pdf.cell(0, 6, cash_lbl2, border=0, ln=1, align="L")
+        pdf.cell(0, 6, cash_lbl2, border=0, ln=1, align="R")
         pdf.set_text_color(0, 0, 0)
         pdf.ln(4)
 
