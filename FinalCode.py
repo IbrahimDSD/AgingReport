@@ -533,7 +533,9 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
             pdf.ln(4)
 
     pdf_output = pdf.output(dest='S')
-    return bytes(pdf_output) if isinstance(pdf_output, bytearray) else pdf_output
+    if isinstance(pdf_output, bytearray):
+        return bytes(pdf_output)
+    return pdf_output
 
 # ----------------- Chart Generation Functions -----------------
 def setup_arabic_font():
