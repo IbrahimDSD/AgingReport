@@ -12,7 +12,6 @@ import os
 import matplotlib.pyplot as plt
 from io import BytesIO
 import matplotlib.font_manager as fm
-import sqlitecloud  # Replace with the actual SQLite Cloud library if different
 
 # SQLite Cloud database connection details
 USER_DB_HOST = "cpran7d0hz.g2.sqlite.cloud:8860"
