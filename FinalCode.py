@@ -12,26 +12,33 @@ import os
 import matplotlib.pyplot as plt
 from io import BytesIO
 import matplotlib.font_manager as fm
-import sqlitecloud
+import sqlitecloud  # Replace with the actual SQLite Cloud library if different
 
-# تعريف URI قاعدة بيانات المستخدمين
-USER_DB_URI = (
-    "sqlitecloud://cpran7d0hz.g2.sqlite.cloud:8860/"
-    "user_management.db?apikey=oUEez4Dc0TFsVVIVFu8SDRiXea9YVQLOcbzWBsUwZ78"
-)
+# SQLite Cloud database connection details
+USER_DB_HOST = "cpran7d0hz.g2.sqlite.cloud:8860"
+USER_DB_APIKEY = "oUEez4Dc0TFsVVIVFu8SDRiXea9YVQLOcbzWBsUwZ78"
+USER_DB_NAME = "user_management.db"
 
-# دالة للتحقق من بيانات تسجيل الدخول
-def check_login(username, password, user_engine):
-    query = text("SELECT * FROM users WHERE username = :username AND password = :password")
-    with user_engine.connect() as conn:
-        result = conn.execute(query, {"username": username, "password": password})
-        return result.fetchone() is not None
+# Function to verify login credentials using SQLite Cloud
+def check_login(username, password):
+    client = sqlitecloud.SQLiteCloud(USER_DB_HOST, apikey=USER_DB_APIKEY)
+    connection = client.connect(USER_DB_NAME)
+    cursor = connection.cursor()
+    cursor.execute(
+        "SELECT * FROM users WHERE username = ? AND password = ?",
+        (username, password)
+    )
+    result = cursor.fetchone()
+    connection.close()
+    return result is not None
 
-# ----------------- Helpers -----------------
+# ----------------- Helper Functions -----------------
 def reshape_text(txt):
+    """Reshape Arabic text for proper display."""
     return get_display(arabic_reshaper.reshape(str(txt)))
 
 def create_db_engine():
+    """Create a database engine for SQL Server."""
     server = "52.48.117.197"
     database = "R1029"
     username = "sa"
@@ -51,14 +58,16 @@ def create_db_engine():
         return None, str(e)
 
 def convert_gold(cur, amt):
+    """Convert amounts to gold grams based on currency ID."""
     if cur == 2:   return amt * 6.0 / 7.0
     if cur == 3:   return amt
     if cur == 4:   return amt * 24.0 / 21.0
     if cur == 14:  return amt * 14.0 / 21.0
     return amt
-    
+
 PRIORITY_FIDS = {3001, 3100, 3108, 3113, 3104}
 def process_fifo(debits, credits, as_of, priority_fids=PRIORITY_FIDS):
+    """Process transactions using FIFO method."""
     credits = [c for c in credits if c["date"] <= as_of]
     pri = deque(sorted(
         [d for d in debits if d["date"] <= as_of and d["functionid"] in priority_fids],
@@ -96,6 +105,7 @@ def process_fifo(debits, credits, as_of, priority_fids=PRIORITY_FIDS):
     return remaining, net_balance
 
 def bucketize(days, grace, length):
+    """Assign overdue amounts to aging buckets."""
     if days <= grace:
         return None
     adj = days - grace
@@ -108,24 +118,27 @@ def bucketize(days, grace, length):
     return f">{grace + 3 * length}"
 
 def format_number(value):
+    """Format numbers for display."""
     try:
-        value = round(float(value), 2)  # تقريب القيمة إلى رقمين عشريين
+        value = float(value)
         if value < 0:
-            return f"({abs(value):,.2f})"  # تنسيق الأرقام السالبة بين قوسين
+            return f"({abs(value):,.2f})"
         elif value == 0:
-            return "-"  # عرض الصفر كشرطة
+            return "-"
         else:
-            return f"{value:,.2f}"  # تنسيق الأرقام الموجبة مع فاصلة للآلاف
+            return f"{value:,.2f}"
     except (ValueError, TypeError):
-        return str(value)  # إرجاع القيمة كنص إذا لم تكن رقمية
+        return str(value)
 
-# ----------------- Data Fetching -----------------
+# ----------------- Data Fetching Functions -----------------
 @st.cache_data(ttl=600)
 def get_salespersons(_engine):
+    """Fetch salespersons from the database."""
     return pd.read_sql("SELECT recordid, name FROM sasp ORDER BY name", _engine)
 
 @st.cache_data(ttl=600)
 def get_customers(_engine, sp_id):
+    """Fetch customers based on salesperson ID."""
     if sp_id is None:
         sql = """
             SELECT DISTINCT acc.recordid, acc.name, acc.spid, COALESCE(sasp.name, 'غير محدد') AS sp_name
@@ -147,6 +160,7 @@ def get_customers(_engine, sp_id):
 
 @st.cache_data(ttl=300)
 def get_overdues(_engine, sp_id, as_of, grace, length):
+    """Fetch and process overdue transactions."""
     base_sql = """
         SELECT f.accountid,
                f.functionid,
@@ -276,8 +290,9 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
         )
     return summary_df, buckets, detail_df
 
-# ----------------- PDF Functions -----------------
+# ----------------- PDF Generation Functions -----------------
 def truncate_text(pdf, text, width):
+    """Truncate text if it exceeds the specified width."""
     ellipsis = "..."
     while pdf.get_string_width(ellipsis + text) > width and len(text) > 0:
         text = text[1:]
@@ -286,6 +301,7 @@ def truncate_text(pdf, text, width):
     return text
 
 def draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w):
+    """Draw headers for the summary PDF table."""
     pdf.cell(name_w, 8, reshape_text("Name"), border=1, align="C", ln=0)
     pdf.cell(bal_w, 8, reshape_text("Balance"), border=1, align="C", ln=0)
     for b in buckets:
@@ -301,6 +317,7 @@ def draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w):
     pdf.cell(sub_w, 8, "EGP", border=1, align="C", ln=1)
 
 def draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length, table_width, col_widths):
+    """Draw the parameters table in the PDF."""
     parameters = [
         ("المندوب", sp_name),
         ("العميل", selected_customer),
@@ -316,6 +333,7 @@ def draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length,
         pdf.cell(col_widths[1], 8, reshape_text(value), border=1, align="R", ln=1)
 
 def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, length):
+    """Generate a summary PDF report."""
     pdf = FPDF(orientation="L", unit="mm", format="A3")
     pdf.add_page()
     pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
@@ -421,6 +439,7 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     return bytes(out) if isinstance(out, bytearray) else out
 
 def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer, grace, length):
+    """Generate a detailed PDF report."""
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
     pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
@@ -485,8 +504,9 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
     pdf_output = pdf.output(dest='S')
     return bytes(pdf_output) if isinstance(pdf_output, bytearray) else pdf_output
 
-# ----------------- Chart Functions -----------------
+# ----------------- Chart Generation Functions -----------------
 def setup_arabic_font():
+    """Set up Arabic font for charts."""
     font_path = "DejaVuSans.ttf"
     if os.path.exists(font_path):
         prop = fm.FontProperties(fname=font_path)
@@ -497,6 +517,7 @@ def setup_arabic_font():
         return None
 
 def create_pie_chart(summary_df, buckets, type="cash"):
+    """Create a pie chart for overdue distribution."""
     total_overdues = {b: summary_df[f"{type}_{b}"].sum() for b in buckets}
     total = sum(total_overdues.values())
     if total == 0:
@@ -528,6 +549,7 @@ def create_pie_chart(summary_df, buckets, type="cash"):
     return buf
 
 def create_bar_chart(summary_df, buckets, type="cash"):
+    """Create a bar chart for top overdue customers."""
     df = summary_df.copy()
     df["total_overdue"] = df[f"{type}_total"]
     top_10 = df.nlargest(10, "total_overdue")
@@ -563,15 +585,13 @@ def create_bar_chart(summary_df, buckets, type="cash"):
     buf.seek(0)
     return buf
 
-# ----------------- Streamlit App -----------------
+# ----------------- Streamlit Application -----------------
 def main():
+    """Main function to run the Streamlit app."""
     st.set_page_config(page_title="Aging Report", layout="wide")
     st.title("📊 تقرير متأخرات العملاء حسب Sales Person")
 
-    # إنشاء محرك الاتصال بقاعدة بيانات المستخدمين
-    user_engine = create_engine(USER_DB_URI)
-
-    # التحقق من حالة تسجيل الدخول
+    # Check login state
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
 
@@ -580,7 +600,7 @@ def main():
         username = st.text_input("اسم المستخدم")
         password = st.text_input("كلمة المرور", type="password")
         if st.button("تسجيل الدخول"):
-            if check_login(username, password, user_engine):
+            if check_login(username, password):
                 st.session_state.logged_in = True
                 st.success("تم تسجيل الدخول بنجاح!")
                 st.rerun()
