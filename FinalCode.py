@@ -389,12 +389,12 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     for sp_id, group in grouped:
         try:
             if sp_id in (0, '0', None):
-                sp_display_name = " "
+                sp_display_name = " No "
             else:
                 sp_display_name = group["sp_name"].iloc[0] if sp_name == "All" else sp_name
 
             pdf.set_xy(10, pdf.get_y())
-            pdf.cell(0, 5, reshape_text(f"المندوب: {sp_display_name}"), border=0, ln=1, align="L")
+            pdf.cell(0, 5, reshape_text(f"اSales Person: {sp_display_name}"), border=0, ln=1, align="L")
             pdf.ln(4)
             draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w)
 
