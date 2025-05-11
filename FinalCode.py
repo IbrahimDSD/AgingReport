@@ -477,7 +477,6 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     return bytes(out) if isinstance(out, bytearray) else out
 
 def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer, grace, length):
-    
         pdf = FPDF(orientation="P", unit="mm", format="A4")
         pdf.add_page()
 
