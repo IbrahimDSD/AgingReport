@@ -492,11 +492,7 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
         execution_date = datetime.now().strftime("%d/%m/%Y %H:%M %p")
         pdf.set_xy(10, 10)
         pdf.cell(0, 5, reshape_text(f"New Egypt Gold | تقرير تفصيلي للمتأخرات"), border=0, ln=0, align="R")
-        pdf.cell(-50, 5, f"ITS-08223 / EGS", border=0, ln=0, align="R")
-        pdf.ln(5)
         pdf.cell(0, 5, f"Execution Date: {execution_date}", border=0, ln=0, align="L")
-        pdf.cell(-50, 5, f"Page Number: 1/1", border=0, ln=0, align="R")
-        pdf.ln(10)
 
         table_width = 120
         col_widths = [40, 80]
