@@ -352,7 +352,7 @@ def draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length,
 def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, length):
     pdf = FPDF(orientation="L", unit="mm", format="A3")
     pdf.add_page()
-    pdf.add_font('DejaVu', '','DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', '','/absolute/path/to/DejaVuSans.ttf', uni=True)
     pdf.set_font('DejaVu', '', 12)
 
     exe = datetime.now().strftime("%d/%m/%Y %I:%M %p")
