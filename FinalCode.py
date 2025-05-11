@@ -15,84 +15,104 @@ from io import BytesIO
 import matplotlib.font_manager as fm
 import sqlitecloud
 import logging
+import traceback
 
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
-
-# SQLite Cloud database connection details
-USER_DB_URI = (
-    "sqlitecloud://cpran7d0hz.g2.sqlite.cloud:8860/"
-    "user_management.db?apikey=oUEez4Dc0TFsVVIVFu8SDRiXea9YVQLOcbzWBsUwZ78"
+# Set up logging to both console and file
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('app.log')
+    ]
 )
+logger = logging.getLogger(__name__)
 
 # Path to font file
 FONT_PATH = "DejaVuSans.ttf"
 
+# Debug mode toggle
+DEBUG_MODE = True
+
 # ----------------- Authentication Setup -----------------
 def get_connection():
     try:
-        return sqlitecloud.connect(USER_DB_URI)
+        return sqlitecloud.connect(
+            "sqlitecloud://cpran7d0hz.g2.sqlite.cloud:8860/"
+            "user_management.db?apikey=oUEez4Dc0TFsVVIVFu8SDRiXea9YVQLOcbzWBsUwZ78"
+        )
     except Exception as e:
         st.error(f"خطأ في الاتصال: {e}")
-        logger.error(f"Database connection error: {e}")
+        logger.error(f"Database connection error: {e}\n{traceback.format_exc()}")
         return None
 
 @st.cache_data(ttl=300)
 def get_all_users():
     conn = get_connection()
     if conn:
-        df = pd.read_sql("SELECT id, username, role, permissions, full_name FROM users", conn)
-        conn.close()
-        return df
+        try:
+            df = pd.read_sql("SELECT id, username, role, permissions, full_name FROM users", conn)
+            conn.close()
+            return df
+        except Exception as e:
+            logger.error(f"Error fetching users: {e}\n{traceback.format_exc()}")
+            conn.close()
     return pd.DataFrame(columns=['id', 'username', 'role', 'permissions', 'full_name'])
 
 def get_user_record(username: str):
     conn = get_connection()
     if conn:
-        c = conn.cursor()
-        c.execute(
-            "SELECT id, password_hash, permissions, role FROM users WHERE username = ?",
-            (username,)
-        )
-        rec = c.fetchone()
-        conn.close()
-        return rec
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT id, password_hash, permissions, role FROM users WHERE username = ?",
+                (username,)
+            )
+            rec = c.fetchone()
+            conn.close()
+            return rec
+        except Exception as e:
+            logger.error(f"Error fetching user record: {e}\n{traceback.format_exc()}")
+            conn.close()
     return None
 
 def check_login(username: str, password: str) -> bool:
-    rec = get_user_record(username)
-    if not rec:
+    try:
+        rec = get_user_record(username)
+        if not rec:
+            return False
+        user_id, pw_hash, permissions, role = rec
+        return pbkdf2_sha256.verify(password, pw_hash)
+    except Exception as e:
+        logger.error(f"Error checking login: {e}\n{traceback.format_exc()}")
         return False
-    user_id, pw_hash, permissions, role = rec
-    return pbkdf2_sha256.verify(password, pw_hash)
 
 # ----------------- Helper Functions -----------------
 def reshape_text(txt):
     try:
         return get_display(arabic_reshaper.reshape(str(txt)))
     except Exception as e:
-        logger.error(f"Error reshaping text: {e}")
+        logger.error(f"Error reshaping text: {e}\n{traceback.format_exc()}")
         return str(txt)
 
 def create_db_engine():
-    server = "52.48.117.197"
-    database = "R1029"
-    username = "sa"
-    password = "Argus@NEG"
-    driver = "ODBC Driver 17 for SQL Server"
-    odbc = (
-        f"DRIVER={{{driver}}};SERVER={server};DATABASE={database};"
-        f"UID={username};PWD={password};TrustServerCertificate=Yes;"
-    )
-    url = f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc)}"
     try:
+        server = "52.48.117.197"
+        database = "R1029"
+        username = "sa"
+        password = "Argus@NEG"
+        driver = "ODBC Driver 17 for SQL Server"
+        odbc = (
+            f"DRIVER={{{driver}}};SERVER={server};DATABASE={database};"
+            f"UID={username};PWD={password};TrustServerCertificate=Yes;"
+        )
+        url = f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc)}"
         eng = create_engine(url, connect_args={"timeout": 5})
         with eng.connect():
             pass
         return eng, None
     except Exception as e:
-        logger.error(f"Database engine creation error: {e}")
+        logger.error(f"Database engine creation error: {e}\n{traceback.format_exc()}")
         return None, str(e)
 
 def convert_gold(cur, amt):
@@ -103,7 +123,7 @@ def convert_gold(cur, amt):
         if cur == 14:  return amt * 14.0 / 21.0
         return amt
     except Exception as e:
-        logger.error(f"Error converting gold: {e}")
+        logger.error(f"Error converting gold: {e}\n{traceback.format_exc()}")
         return amt
 
 PRIORITY_FIDS = {3001, 3100, 3108, 3113, 3104}
@@ -145,7 +165,7 @@ def process_fifo(debits, credits, as_of, priority_fids=PRIORITY_FIDS):
         net_balance = total_remaining - excess
         return remaining, net_balance
     except Exception as e:
-        logger.error(f"Error in process_fifo: {e}")
+        logger.error(f"Error in process_fifo: {e}\n{traceback.format_exc()}")
         return [], 0.0
 
 def bucketize(days, grace, length):
@@ -161,12 +181,13 @@ def bucketize(days, grace, length):
             return f"{grace + 2 * length + 1}-{grace + 3 * length}"
         return f">{grace + 3 * length}"
     except Exception as e:
-        logger.error(f"Error in bucketize: {e}")
+        logger.error(f"Error in bucketize: {e}\n{traceback.format_exc()}")
         return None
 
 def format_number(value):
     try:
-        value = round(float(value), 2)
+        value = float(value)
+        value = round(value, 2)
         if value < 0:
             return f"({abs(value):,.2f})"
         elif value == 0:
@@ -174,7 +195,7 @@ def format_number(value):
         else:
             return f"{value:,.2f}"
     except (ValueError, TypeError) as e:
-        logger.error(f"Error formatting number: {e}")
+        logger.error(f"Error formatting number: {value}, Error: {e}\n{traceback.format_exc()}")
         return str(value)
 
 # ----------------- Data Fetching Functions -----------------
@@ -183,7 +204,7 @@ def get_salespersons(_engine):
     try:
         return pd.read_sql("SELECT recordid, name FROM sasp ORDER BY name", _engine)
     except Exception as e:
-        logger.error(f"Error fetching salespersons: {e}")
+        logger.error(f"Error fetching salespersons: {e}\n{traceback.format_exc()}")
         return pd.DataFrame(columns=['recordid', 'name'])
 
 @st.cache_data(ttl=600)
@@ -208,7 +229,7 @@ def get_customers(_engine, sp_id):
                 """
             return pd.read_sql(text(sql), _engine, params={"sp": sp_id})
     except Exception as e:
-        logger.error(f"Error fetching customers: {e}")
+        logger.error(f"Error fetching customers: {e}\n{traceback.format_exc()}")
         return pd.DataFrame(columns=['recordid', 'name', 'spid', 'sp_name'])
 
 @st.cache_data(ttl=300)
@@ -341,23 +362,26 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
                 key=lambda col: col.astype(str),
                 inplace=True
             )
+        if DEBUG_MODE:
+            logger.debug(f"Summary DF:\n{summary_df}\nDetail DF:\n{detail_df}")
         return summary_df, buckets, detail_df
     except Exception as e:
-        logger.error(f"Error in get_overdues: {e}")
+        logger.error(f"Error in get_overdues: {e}\n{traceback.format_exc()}")
         return pd.DataFrame(), [], pd.DataFrame()
 
 # ----------------- PDF Generation Functions -----------------
 def truncate_text(pdf, text, width):
     try:
         ellipsis = "..."
+        text = str(text)
         while pdf.get_string_width(ellipsis + text) > width and len(text) > 0:
             text = text[1:]
         if pdf.get_string_width(ellipsis + text) <= width:
             text = ellipsis + text
         return text
     except Exception as e:
-        logger.error(f"Error in truncate_text: {e}")
-        return text
+        logger.error(f"Error in truncate_text: {e}\n{traceback.format_exc()}")
+        return str(text)
 
 def draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w):
     try:
@@ -375,14 +399,14 @@ def draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w):
         pdf.cell(sub_w, 8, "G21", border=1, align="C", ln=0)
         pdf.cell(sub_w, 8, "EGP", border=1, align="C", ln=1)
     except Exception as e:
-        logger.error(f"Error in draw_table_headers: {e}")
+        logger.error(f"Error in draw_table_headers: {e}\n{traceback.format_exc()}")
         raise
 
 def draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length, table_width, col_widths):
     try:
         parameters = [
-            ("المندوب", sp_name),
-            ("العميل", selected_customer),
+            ("المندوب", str(sp_name)),
+            ("العميل", str(selected_customer)),
             ("تاريخ الاستحقاق", as_of.strftime('%d/%m/%Y')),
             ("فترة السماحية", f"{grace} يوم"),
             ("مدة الفترة", f"{length} يوم")
@@ -394,26 +418,41 @@ def draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length,
             pdf.cell(col_widths[0], 8, reshape_text(label), border=1, align="R", ln=0)
             pdf.cell(col_widths[1], 8, reshape_text(value), border=1, align="R", ln=1)
     except Exception as e:
-        logger.error(f"Error in draw_parameters_table: {e}")
+        logger.error(f"Error in draw_parameters_table: {e}\n{traceback.format_exc()}")
         raise
 
 def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, length):
     try:
         if not os.path.exists(FONT_PATH):
-            raise FileNotFoundError(f"Font file not found at {FONT_PATH}")
+            error_msg = f"Font file not found at {FONT_PATH}"
+            logger.error(error_msg)
+            st.error(error_msg)
+            return None
 
-        # Clean DataFrame
+        # Clean and validate DataFrame
+        if df.empty:
+            error_msg = "Summary DataFrame is empty"
+            logger.error(error_msg)
+            st.error(error_msg)
+            return None
         df = df.fillna(0)
         df = df.astype(str, errors='ignore')
+        logger.debug(f"Summary DF for PDF:\n{df}")
 
         pdf = FPDF(orientation="L", unit="mm", format="A3")
         pdf.add_page()
-        pdf.add_font('DejaVu', '', FONT_PATH, uni=True)
+        try:
+            pdf.add_font('DejaVu', '', FONT_PATH, uni=True)
+        except Exception as e:
+            error_msg = f"Failed to load font: {e}"
+            logger.error(f"{error_msg}\n{traceback.format_exc()}")
+            st.error(error_msg)
+            return None
         pdf.set_font('DejaVu', '', 12)
 
         exe = datetime.now().strftime("%d/%m/%Y %I:%M %p")
         pdf.set_xy(10, 10)
-        pdf.cell(0, 5, reshape_text("New Egypt Gold | تقرير متأخرات"), ln=0, align="c")
+        pdf.cell(0, 5, reshape_text("New Egypt Gold | تقرير متأخرات"), ln=0, align="C")
         pdf.ln(5)
         pdf.cell(0, 5, f"Execution Date: {exe}", ln=0, align="L")
         pdf.ln(10)
@@ -433,7 +472,7 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
         bottom_margin = 20
 
         if sp_name == "All":
-            grouped = df.groupby("sp_id")
+            grouped = df.groupby("sp_id", as_index=False)
         else:
             grouped = [(sp_name, df)]
 
@@ -509,27 +548,47 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
 
         out = pdf.output(dest="S")
         if not out or (isinstance(out, (bytes, bytearray)) and len(out) == 0):
-            raise ValueError("PDF output is empty")
+            error_msg = "PDF output is empty"
+            logger.error(error_msg)
+            st.error(error_msg)
+            return None
+        logger.info("Summary PDF generated successfully")
         return bytes(out) if isinstance(out, bytearray) else out
     except Exception as e:
-        logger.error(f"Error in build_summary_pdf: {e}")
+        error_msg = f"Error in build_summary_pdf: {e}\n{traceback.format_exc()}"
+        logger.error(error_msg)
         st.error(f"فشل في إنشاء ملف PDF (Summary): {str(e)}")
         return None
 
 def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer, grace, length):
     try:
         if not os.path.exists(FONT_PATH):
-            raise FileNotFoundError(f"Font file not found at {FONT_PATH}")
+            error_msg = f"Font file not found at {FONT_PATH}"
+            logger.error(error_msg)
+            st.error(error_msg)
+            return None
 
-        # Clean DataFrames
+        # Clean and validate DataFrames
+        if detail_df.empty or summary_df.empty:
+            error_msg = "Detail or Summary DataFrame is empty"
+            logger.error(error_msg)
+            st.error(error_msg)
+            return None
         detail_df = detail_df.fillna(0)
         detail_df = detail_df.astype(str, errors='ignore')
         summary_df = summary_df.fillna(0)
         summary_df = summary_df.astype(str, errors='ignore')
+        logger.debug(f"Detail DF for PDF:\n{detail_df}\nSummary DF for PDF:\n{summary_df}")
 
         pdf = FPDF(orientation="P", unit="mm", format="A4")
         pdf.add_page()
-        pdf.add_font('DejaVu', '', FONT_PATH, uni=True)
+        try:
+            pdf.add_font('DejaVu', '', FONT_PATH, uni=True)
+        except Exception as e:
+            error_msg = f"Failed to load font: {e}"
+            logger.error(f"{error_msg}\n{traceback.format_exc()}")
+            st.error(error_msg)
+            return None
         pdf.set_font('DejaVu', '', 12)
 
         execution_date = datetime.now().strftime("%d/%m/%Y %H:%M %p")
@@ -588,12 +647,17 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
                     pdf.cell(30, 10, str(row["Delay Days"]), border=1, align="R", ln=1)
                 pdf.ln(4)
 
-        pdf_output = pdf.output(dest='S')
-        if not pdf_output or (isinstance(pdf_output, (bytes, bytearray)) and len(pdf_output) == 0):
-            raise ValueError("PDF output is empty")
-        return bytes(pdf_output) if isinstance(pdf_output, bytearray) else pdf_output
+        out = pdf.output(dest="S")
+        if not out or (isinstance(out, (bytes, bytearray)) and len(out) == 0):
+            error_msg = "PDF output is empty"
+            logger.error(error_msg)
+            st.error(error_msg)
+            return None
+        logger.info("Detailed PDF generated successfully")
+        return bytes(out) if isinstance(out, bytearray) else out
     except Exception as e:
-        logger.error(f"Error in build_detailed_pdf: {e}")
+        error_msg = f"Error in build_detailed_pdf: {e}\n{traceback.format_exc()}"
+        logger.error(error_msg)
         st.error(f"فشل في إنشاء ملف PDF (Detailed): {str(e)}")
         return None
 
@@ -601,14 +665,15 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
 def setup_arabic_font():
     try:
         if not os.path.exists(FONT_PATH):
-            st.warning(f"Arabic font not found at {FONT_PATH}. Using default font (may not support Arabic).")
-            logger.warning(f"Font file not found at {FONT_PATH}")
+            error_msg = f"Arabic font not found at {FONT_PATH}. Using default font (may not support Arabic)."
+            st.warning(error_msg)
+            logger.warning(error_msg)
             return None
         prop = fm.FontProperties(fname=FONT_PATH)
         plt.rc('font', family='DejaVu Sans')
         return prop
     except Exception as e:
-        logger.error(f"Error setting up Arabic font: {e}")
+        logger.error(f"Error setting up Arabic font: {e}\n{traceback.format_exc()}")
         return None
 
 def create_pie_chart(summary_df, buckets, type="cash"):
@@ -643,7 +708,7 @@ def create_pie_chart(summary_df, buckets, type="cash"):
         buf.seek(0)
         return buf
     except Exception as e:
-        logger.error(f"Error in create_pie_chart: {e}")
+        logger.error(f"Error in create_pie_chart: {e}\n{traceback.format_exc()}")
         return None
 
 def create_bar_chart(summary_df, buckets, type="cash"):
@@ -683,7 +748,7 @@ def create_bar_chart(summary_df, buckets, type="cash"):
         buf.seek(0)
         return buf
     except Exception as e:
-        logger.error(f"Error in create_bar_chart: {e}")
+        logger.error(f"Error in create_bar_chart: {e}\n{traceback.format_exc()}")
         return None
 
 # ----------------- Streamlit Application -----------------
@@ -739,150 +804,170 @@ def main():
             generate_button = st.button("Generate")
 
         if generate_button:
-            summary_df, buckets, detail_df = get_overdues(engine, sp_id, as_of, grace, length)
-            if summary_df.empty:
-                st.warning("لا توجد متأخرات أو أرصدة لهذا المندوب.")
-                return
+            try:
+                summary_df, buckets, detail_df = get_overdues(engine, sp_id, as_of, grace, length)
+                if summary_df.empty:
+                    st.warning("لا توجد متأخرات أو أرصدة لهذا المندوب.")
+                    return
 
-            if selected_customer != "الكل":
-                summary_df = summary_df[summary_df["Customer"] == selected_customer]
-                detail_df = detail_df[detail_df["Customer Name"] == selected_customer]
+                if selected_customer != "الكل":
+                    summary_df = summary_df[summary_df["Customer"] == selected_customer]
+                    detail_df = detail_df[detail_df["Customer Name"] == selected_customer]
 
-            if summary_df.empty:
-                st.warning("لا توجد متأخرات أو أرصدة لهذا العميل.")
-                return
+                if summary_df.empty:
+                    st.warning("لا توجد متأخرات أو أرصدة لهذا العميل.")
+                    return
 
-            st.subheader(f"المتأخرات حتى {as_of} (بعد فترة السماحية {grace} يوم)")
+                if DEBUG_MODE:
+                    st.subheader("Debug: Data Inspection")
+                    st.write("Summary DataFrame:")
+                    st.dataframe(summary_df)
+                    st.write("Detail DataFrame:")
+                    st.dataframe(detail_df)
 
-            overdue_buckets = buckets
-            cash_grand_total = sum(summary_df[f"cash_{b}"].sum() for b in overdue_buckets)
-            gold_grand_total = sum(summary_df[f"gold_{b}"].sum() for b in overdue_buckets)
-            total_cash_due = summary_df["total_cash_due"].sum()
-            total_gold_due = summary_df["total_gold_due"].sum()
+                st.subheader(f"المتأخرات حتى {as_of} (بعد فترة السماحية {grace} يوم)")
 
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Cash Balance", f"{format_number(total_cash_due)} EGP",
-                          delta_color="normal" if total_cash_due > 0 else "inverse")
-            with col2:
-                st.metric("Total Cash Delays", f"{format_number(cash_grand_total)} EGP")
-            with col3:
-                st.metric("Total Gold Balance", f"{format_number(total_gold_due)} G21",
-                          delta_color="normal" if total_gold_due > 0 else "inverse")
-            with col4:
-                st.metric("Total Gold Delays", f"{format_number(gold_grand_total)} G21")
+                overdue_buckets = buckets
+                cash_grand_total = sum(summary_df[f"cash_{b}"].sum() for b in overdue_buckets)
+                gold_grand_total = sum(summary_df[f"gold_{b}"].sum() for b in overdue_buckets)
+                total_cash_due = summary_df["total_cash_due"].sum()
+                total_gold_due = summary_df["total_gold_due"].sum()
 
-            st.subheader("تحليل المتأخرات")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("**توزيع التأخيرات حسب الفترة (كاش)**")
-                pie_chart_cash = create_pie_chart(summary_df, buckets, type="cash")
-                if pie_chart_cash:
-                    st.image(pie_chart_cash)
-                st.markdown("**توزيع التأخيرات حسب الفترة (ذهب)**")
-                pie_chart_gold = create_pie_chart(summary_df, buckets, type="gold")
-                if pie_chart_gold:
-                    st.image(pie_chart_gold)
-            with col2:
-                st.markdown("**أعلى 10 عملاء بالمتأخرات (كاش)**")
-                bar_chart_cash = create_bar_chart(summary_df, buckets, type="cash")
-                if bar_chart_cash:
-                    st.image(bar_chart_cash)
-                st.markdown("**أعلى 10 عملاء بالمتأخرات (ذهب)**")
-                bar_chart_gold = create_bar_chart(summary_df, buckets, type="gold")
-                if bar_chart_gold:
-                    st.image(bar_chart_gold)
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Cash Balance", f"{format_number(total_cash_due)} EGP",
+                              delta_color="normal" if total_cash_due > 0 else "inverse")
+                with col2:
+                    st.metric("Total Cash Delays", f"{format_number(cash_grand_total)} EGP")
+                with col3:
+                    st.metric("Total Gold Balance", f"{format_number(total_gold_due)} G21",
+                              delta_color="normal" if total_gold_due > 0 else "inverse")
+                with col4:
+                    st.metric("Total Gold Delays", f"{format_number(gold_grand_total)} G21")
 
-            if report_type == "Summary Report":
-                st.markdown("**المتأخرات**")
-                columns = ["Code", "Customer", "total_gold_due", "total_cash_due"]
-                for b in buckets:
-                    columns.append(f"gold_{b}")
-                    columns.append(f"cash_{b}")
-                columns.extend(["gold_total", "cash_total"])
+                st.subheader("تحليل المتأخرات")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**توزيع التأخيرات حسب الفترة (كاش)**")
+                    pie_chart_cash = create_pie_chart(summary_df, buckets, type="cash")
+                    if pie_chart_cash:
+                        st.image(pie_chart_cash)
+                    else:
+                        st.warning("لا يمكن إنشاء الرسم البياني النقدي (بيانات غير متوفرة).")
+                    st.markdown("**توزيع التأخيرات حسب الفترة (ذهب)**")
+                    pie_chart_gold = create_pie_chart(summary_df, buckets, type="gold")
+                    if pie_chart_gold:
+                        st.image(pie_chart_gold)
+                    else:
+                        st.warning("لا يمكن إنشاء الرسم البياني الذهبي (بيانات غير متوفرة).")
+                with col2:
+                    st.markdown("**أعلى 10 عملاء بالمتأخرات (كاش)**")
+                    bar_chart_cash = create_bar_chart(summary_df, buckets, type="cash")
+                    if bar_chart_cash:
+                        st.image(bar_chart_cash)
+                    else:
+                        st.warning("لا يمكن إنشاء الرسم البياني النقدي لأعلى 10 عملاء (بيانات غير متوفرة).")
+                    st.markdown("**أعلى 10 عملاء بالمتأخرات (ذهب)**")
+                    bar_chart_gold = create_bar_chart(summary_df, buckets, type="gold")
+                    if bar_chart_gold:
+                        st.image(bar_chart_gold)
+                    else:
+                        st.warning("لا يمكن إنشاء الرسم البياني الذهبي لأعلى 10 عملاء (بيانات غير متوفرة).")
 
-                display_df = summary_df[columns].copy()
-                display_df["total_gold_due"] = display_df["total_gold_due"].apply(format_number)
-                display_df["total_cash_due"] = display_df["total_cash_due"].apply(format_number)
-                display_df["gold_total"] = display_df["gold_total"].apply(format_number)
-                display_df["cash_total"] = display_df["cash_total"].apply(format_number)
-                for b in buckets:
-                    display_df[f"gold_{b}"] = display_df[f"gold_{b}"].apply(format_number)
-                    display_df[f"cash_{b}"] = display_df[f"cash_{b}"].apply(format_number)
+                if report_type == "Summary Report":
+                    st.markdown("**المتأخرات**")
+                    columns = ["Code", "Customer", "total_gold_due", "total_cash_due"]
+                    for b in buckets:
+                        columns.append(f"gold_{b}")
+                        columns.append(f"cash_{b}")
+                    columns.extend(["gold_total", "cash_total"])
 
-                column_mapping = {
-                    "Code": "Customer Ref",
-                    "Customer": "Customer Name",
-                    "total_gold_due": "Total G21 Balance",
-                    "total_cash_due": "Total EGP Balance",
-                    "gold_total": "Total G21 Delay",
-                    "cash_total": "Total EGP Delay"
-                }
-                for b in buckets:
-                    display_label = f"من {b.replace('-', ' إلى ').replace('>', 'أكبر من ')} يوم"
-                    column_mapping[f"gold_{b}"] = f"{display_label} G21"
-                    column_mapping[f"cash_{b}"] = f"{display_label} EGP"
+                    display_df = summary_df[columns].copy()
+                    display_df["total_gold_due"] = display_df["total_gold_due"].apply(format_number)
+                    display_df["total_cash_due"] = display_df["total_cash_due"].apply(format_number)
+                    display_df["gold_total"] = display_df["gold_total"].apply(format_number)
+                    display_df["cash_total"] = display_df["cash_total"].apply(format_number)
+                    for b in buckets:
+                        display_df[f"gold_{b}"] = display_df[f"gold_{b}"].apply(format_number)
+                        display_df[f"cash_{b}"] = display_df[f"cash_{b}"].apply(format_number)
 
-                def highlight_negatives(s):
-                    if s.name in ["Total G21 Balance", "Total EGP Balance"]:
-                        return ['background-color: red' if v.startswith('(') else '' for v in s]
-                    return [''] * len(s)
+                    column_mapping = {
+                        "Code": "Customer Ref",
+                        "Customer": "Customer Name",
+                        "total_gold_due": "Total G21 Balance",
+                        "total_cash_due": "Total EGP Balance",
+                        "gold_total": "Total G21 Delay",
+                        "cash_total": "Total EGP Delay"
+                    }
+                    for b in buckets:
+                        display_label = f"من {b.replace('-', ' إلى ').replace('>', 'أكبر من ')} يوم"
+                        column_mapping[f"gold_{b}"] = f"{display_label} G21"
+                        column_mapping[f"cash_{b}"] = f"{display_label} EGP"
 
-                st.dataframe(
-                    display_df.rename(columns=column_mapping).style.apply(highlight_negatives, axis=0),
-                    use_container_width=True
-                )
+                    def highlight_negatives(s):
+                        if s.name in ["Total G21 Balance", "Total EGP Balance"]:
+                            return ['background-color: red' if v.startswith('(') else '' for v in s]
+                        return [''] * len(s)
 
-                pdf = build_summary_pdf(summary_df, sel, as_of, buckets, selected_customer, grace, length)
-                filename = f"summary_overdues_{sel}_{as_of}.pdf"
+                    st.dataframe(
+                        display_df.rename(columns=column_mapping).style.apply(highlight_negatives, axis=0),
+                        use_container_width=True
+                    )
 
-            else:
-                st.subheader("تفاصيل متأخرات العملاء")
-                customers = set(summary_df["Customer"])
-                if customers:
-                    st.markdown("**تفاصيل الفواتير المتأخرة (بعد فترة السماحية)**")
-                    for customer in sorted(customers):
-                        group = detail_df[detail_df["Customer Name"] == customer]
-                        if not group.empty:
-                            customer_summary = summary_df[summary_df["Customer"] == customer]
-                            total_cash_due = float(customer_summary["total_cash_due"].iloc[0]) if not customer_summary.empty else 0.0
-                            total_gold_due = float(customer_summary["total_gold_due"].iloc[0]) if not customer_summary.empty else 0.0
-                            total_cash_overdue = float(customer_summary["cash_total"].iloc[0]) if not customer_summary.empty else 0.0
-                            total_gold_overdue = float(customer_summary["gold_total"].iloc[0]) if not customer_summary.empty else 0.0
+                    pdf = build_summary_pdf(summary_df, sel, as_of, buckets, selected_customer, grace, length)
+                    filename = f"summary_overdues_{sel}_{as_of}.pdf"
 
-                            st.markdown(f"**العميل: {customer} (كود: {customer_summary['Code'].iloc[0] if not customer_summary.empty else '-'})**")
-                            color_cash = "green" if total_cash_due <= 0 else "red"
-                            color_gold = "green" if total_gold_due <= 0 else "blue"
-                            st.markdown(f"<span style='color: {color_gold};'>إجمالي المديونية الذهبية: {format_number(total_gold_due)}</span> | "
-                                        f"<span style='color: {color_cash};'>إجمالي المديونية النقدية: {format_number(total_cash_due)}</span>",
-                                        unsafe_allow_html=True)
-                            st.markdown(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)} | "
-                                        f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}",
-                                        unsafe_allow_html=True)
-
-                            display_group = group[["Invoice Ref", "Invoice Date", "Overdue G21", "Overdue EGP", "Delay Days"]].copy()
-                            display_group["Overdue G21"] = display_group["Overdue G21"].apply(lambda x: format_number(float(x)))
-                            display_group["Overdue EGP"] = display_group["Overdue EGP"].apply(lambda x: format_number(float(x)))
-                            st.dataframe(
-                                display_group.rename(columns={
-                                    "Invoice Ref": "Invoice Ref",
-                                    "Invoice Date": "Invoice Date",
-                                    "Overdue G21": "G21 Delay",
-                                    "Overdue EGP": "EGP Delay",
-                                    "Delay Days": "Delay Days"
-                                }),
-                                use_container_width=True
-                            )
                 else:
-                    st.warning("لا توجد فواتير متأخرة أو أرصدة.")
+                    st.subheader("تفاصيل متأخرات العملاء")
+                    customers = set(summary_df["Customer"])
+                    if customers:
+                        st.markdown("**تفاصيل الفواتير المتأخرة (بعد فترة السماحية)**")
+                        for customer in sorted(customers):
+                            group = detail_df[detail_df["Customer Name"] == customer]
+                            if not group.empty:
+                                customer_summary = summary_df[summary_df["Customer"] == customer]
+                                total_cash_due = float(customer_summary["total_cash_due"].iloc[0]) if not customer_summary.empty else 0.0
+                                total_gold_due = float(customer_summary["total_gold_due"].iloc[0]) if not customer_summary.empty else 0.0
+                                total_cash_overdue = float(customer_summary["cash_total"].iloc[0]) if not customer_summary.empty else 0.0
+                                total_gold_overdue = float(customer_summary["gold_total"].iloc[0]) if not customer_summary.empty else 0.0
 
-                pdf = build_detailed_pdf(detail_df, summary_df, sel, as_of, selected_customer, grace, length)
-                filename = f"detailed_overdues_{sel}_{as_of}.pdf"
+                                st.markdown(f"**العميل: {customer} (كود: {customer_summary['Code'].iloc[0] if not customer_summary.empty else '-'})**")
+                                color_cash = "green" if total_cash_due <= 0 else "red"
+                                color_gold = "green" if total_gold_due <= 0 else "blue"
+                                st.markdown(f"<span style='color: {color_gold};'>إجمالي المديونية الذهبية: {format_number(total_gold_due)}</span> | "
+                                            f"<span style='color: {color_cash};'>إجمالي المديونية النقدية: {format_number(total_cash_due)}</span>",
+                                            unsafe_allow_html=True)
+                                st.markdown(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)} | "
+                                            f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)}",
+                                            unsafe_allow_html=True)
 
-            if pdf and isinstance(pdf, (bytes, bytearray)) and len(pdf) > 0:
-                st.download_button("⬇️ تحميل PDF", pdf, filename, "application/pdf")
-            else:
-                st.error("فشل في إنشاء ملف PDF. تحقق من السجلات لمزيد من التفاصيل.")
+                                display_group = group[["Invoice Ref", "Invoice Date", "Overdue G21", "Overdue EGP", "Delay Days"]].copy()
+                                display_group["Overdue G21"] = display_group["Overdue G21"].apply(lambda x: format_number(float(x)))
+                                display_group["Overdue EGP"] = display_group["Overdue EGP"].apply(lambda x: format_number(float(x)))
+                                st.dataframe(
+                                    display_group.rename(columns={
+                                        "Invoice Ref": "Invoice Ref",
+                                        "Invoice Date": "Invoice Date",
+                                        "Overdue G21": "G21 Delay",
+                                        "Overdue EGP": "EGP Delay",
+                                        "Delay Days": "Delay Days"
+                                    }),
+                                    use_container_width=True
+                                )
+                    else:
+                        st.warning("لا توجد فواتير متأخرة أو أرصدة.")
+
+                    pdf = build_detailed_pdf(detail_df, summary_df, sel, as_of, selected_customer, grace, length)
+                    filename = f"detailed_overdues_{sel}_{as_of}.pdf"
+
+                if pdf and isinstance(pdf, (bytes, bytearray)) and len(pdf) > 0:
+                    st.download_button("⬇️ تحميل PDF", pdf, filename, "application/pdf")
+                else:
+                    st.error("فشل في إنشاء ملف PDF. تحقق من السجلات (app.log) أو واجهة المستخدم لمزيد من التفاصيل.")
+            except Exception as e:
+                error_msg = f"Error in report generation: {e}\n{traceback.format_exc()}"
+                logger.error(error_msg)
+                st.error(f"خطأ عام أثناء إنشاء التقرير: {str(e)}")
 
 if __name__ == "__main__":
     main()
