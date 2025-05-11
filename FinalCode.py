@@ -479,7 +479,7 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
 def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer, grace, length):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
-    pdf.add_font('DejaVu', '', r'D:\FinalCode-main\FinalCode-main\dejavu-sans\DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
     pdf.set_font('DejaVu', '', 12)
 
     execution_date = datetime.now().strftime("%d/%m/%Y %H:%M %p")
