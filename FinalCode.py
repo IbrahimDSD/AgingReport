@@ -291,6 +291,7 @@ def get_overdues(_engine, sp_id, as_of, grace, length):
                 "Customer": name,
                 "Code": code,
                 "sp_name": sp_name,
+                "spid": spid,
                 "total_cash_due": net_cash,
                 "total_gold_due": net_gold,
                 **sums,
