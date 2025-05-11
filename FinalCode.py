@@ -391,7 +391,7 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
         grouped = [(sp_name, df)]
 
     for sp_id, group in grouped:
-        try:
+        
             # التعامل مع العملاء غير المربوطين
             if sp_id in (0, '0', None):
                 sp_display_name = "غير محدد"
