@@ -361,7 +361,7 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     pdf.set_xy(10, 10)
     pdf.cell(0, 5, reshape_text("New Egypt Gold | تقرير المتأخرات"), ln=0, align="C")
     pdf.ln(5)
-    pdf.cell(0, 5, f"Execution Date: {exe}", ln=0, align="L")
+    pdf.cell(0, 5, f"Execution Date: {execution_date}", border=0, ln=0, align="L")
     pdf.ln(10)
 
     
@@ -477,7 +477,7 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
     return bytes(out) if isinstance(out, bytearray) else out
 
 def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer, grace, length):
-    pdf = FPDF(orientation="P", unit="mm", format="A3")
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
     pdf.add_font('DejaVu', '', "DejaVuSans.ttf", uni=True)
     pdf.set_font('DejaVu', '', 12)
