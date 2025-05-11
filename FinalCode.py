@@ -516,7 +516,7 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
             total_gold_overdue = customer_summary["gold_total"].iloc[0] if not customer_summary.empty else 0.0
 
             pdf.set_xy(10, pdf.get_y())
-            pdf.multi_cell(0, 5, reshape_text(f"العميل: {customer}"), border=0, align="R")
+            pdf.multi_cell(0, 5, reshape_text(f"العميل: {customer}"), border=0, align="L")
             pdf.set_xy(10, pdf.get_y())
             pdf.set_text_color(0, 128, 0) if total_cash_due <= 0 else pdf.set_text_color(255, 0, 0)
             pdf.cell(0, 5, reshape_text(f"إجمالي المديونية النقدية: {format_number(total_cash_due)}"), border=0,
