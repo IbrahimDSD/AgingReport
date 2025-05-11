@@ -33,7 +33,7 @@ def check_login(username, password):
             qry = text(
                 "SELECT 1 "
                 "FROM users "
-                "WHERE username = :u AND password = :p "
+                "WHERE username = :u AND  password_hash = :p "
                 "LIMIT 1"
             )
             row = conn.execute(qry, {"u": username, "p": password}).first()
