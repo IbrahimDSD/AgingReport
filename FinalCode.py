@@ -520,23 +520,42 @@ def build_detailed_pdf(detail_df, summary_df, sp_name, as_of, selected_customer,
         pdf.ln(2)
 
         # --- سطر إجمالي المتأخرات: ذهب ثم نقداً ---
-        gold_lbl = reshape_text(f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)} G21")
-        cash_lbl = reshape_text(f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)} EGP")
-        pdf.set_text_color(0, 0, 255)  # لون الذهب
-        pdf.cell(0, 6, gold_lbl, border=0, ln=0, align="L")
-        pdf.set_text_color(255, 0, 0)  # لون الكاش
-        pdf.cell(0, 6, cash_lbl, border=0, ln=1, align="L")
-        pdf.ln(1)
+        # نفترض الهوامش الأفقية ثابتة
+       left_margin  = pdf.l_margin
+       right_margin = pdf.r_margin
+       page_width   = pdf.w
+       usable_width = page_width - left_margin - right_margin
 
-        # --- سطر إجمالي المديونية: ذهب ثم نقداً ---
-        gold_lbl2 = reshape_text(f"إجمالي المديونية الذهبية: {format_number(total_gold_due)} G21")
-        cash_lbl2 = reshape_text(f"إجمالي المديونية النقدية: {format_number(total_cash_due)} EGP")
-        pdf.set_text_color(0, 0, 255)
-        pdf.cell(0, 6, gold_lbl2, border=0, ln=0, align="L")
-        pdf.set_text_color(255, 0, 0)
-        pdf.cell(0, 6, cash_lbl2, border=0, ln=1, align="L")
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln(4)
+# خذ نصف المساحة لكل خلية
+       half_width = usable_width / 2
+
+# سطر المتأخرات
+       gold_lbl = reshape_text(
+        f"إجمالي المتأخرات الذهبية: {format_number(total_gold_overdue)} G21"
+     )
+       cash_lbl = reshape_text(
+        f"إجمالي المتأخرات النقدية: {format_number(total_cash_overdue)} EGP"
+     )
+       pdf.set_text_color(0, 0, 255)  # لون الذهب
+       pdf.cell(half_width, 6, gold_lbl, border=0, ln=0, align="L")
+       pdf.set_text_color(255, 0, 0)  # لون الكاش
+       pdf.cell(half_width, 6, cash_lbl, border=0, ln=1, align="L")
+       pdf.ln(1)
+
+# سطر المديونية
+       gold_lbl2 = reshape_text(
+          f"إجمالي المديونية الذهبية: {format_number(total_gold_due)} G21"
+    )
+       cash_lbl2 = reshape_text(
+       f"إجمالي المديونية النقدية: {format_number(total_cash_due)} EGP"
+    )
+       pdf.set_text_color(0, 0, 255)
+       pdf.cell(half_width, 6, gold_lbl2, border=0, ln=0, align="L")
+       pdf.set_text_color(255, 0, 0)
+       pdf.cell(half_width, 6, cash_lbl2, border=0, ln=1, align="L")
+       pdf.set_text_color(0, 0, 0)
+       pdf.ln(4)
+
 
         # --- الآن جدول الفواتير كما كان ---
         headers = ["رقم الفاتورة", "تاريخ الفاتورة", "المتأخرة G21", "المتأخرة EGP", "عدد أيام التأخير"]
