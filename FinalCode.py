@@ -14,20 +14,34 @@ from io import BytesIO
 import matplotlib.font_manager as fm
 
 # SQLite Cloud database connection details
+# ----------------- Authentication Setup -----------------
 USER_DB_URI = (
     "sqlitecloud://cpran7d0hz.g2.sqlite.cloud:8860/"
     "user_management.db?apikey=oUEez4Dc0TFsVVIVFu8SDRiXea9YVQLOcbzWBsUwZ78"
 )
+from sqlalchemy import create_engine, text
 
-# Function to verify login credentials using SQLite Cloud
+# Create auth engine once
 auth_engine = create_engine(USER_DB_URI)
 
 def check_login(username, password):
-    with auth_engine.connect() as conn:
-        # If your passwords are stored plaintext:
-        qry = text("SELECT 1 FROM users WHERE username = :u AND password = :p")
-        row = conn.execute(qry, {"u": username, "p": password}).first()
-        return row is not None
+    """
+    Verify user credentials against the SQLiteCloud 'users' table via SQLAlchemy.
+    """
+    try:
+        with auth_engine.connect() as conn:
+            qry = text(
+                "SELECT 1 "
+                "FROM users "
+                "WHERE username = :u AND password = :p "
+                "LIMIT 1"
+            )
+            row = conn.execute(qry, {"u": username, "p": password}).first()
+            return row is not None
+    except Exception as e:
+        st.error(f"Auth DB error: {e}")
+        return False
+
 
 # ----------------- Helper Functions -----------------
 def reshape_text(txt):
