@@ -10,6 +10,7 @@ from bidi.algorithm import get_display
 from collections import deque
 from passlib.hash import pbkdf2_sha256
 import matplotlib.pyplot as plt
+import os
 from io import BytesIO
 import matplotlib.font_manager as fm
 import sqlitecloud
