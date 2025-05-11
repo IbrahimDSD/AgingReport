@@ -320,7 +320,8 @@ def draw_parameters_table(pdf, sp_name, selected_customer, as_of, grace, length,
 def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, length):
     pdf = FPDF(orientation="L", unit="mm", format="A3")
     pdf.add_page()
-    load_arabic_font(pdf)
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+    pdf.set_font('DejaVu', '', 12)
 
     exe = datetime.now().strftime("%d/%m/%Y %I:%M %p")
     pdf.set_xy(10, 10)
@@ -382,7 +383,8 @@ def build_summary_pdf(df, sp_name, as_of, buckets, selected_customer, grace, len
             # Check for page break
             if pdf.get_y() + row_h + bottom_margin > pdf.h:
                 pdf.add_page()
-                load_arabic_font(pdf)
+                pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+                pdf.set_font('DejaVu', '', 12)
                 pdf.cell(0, 5, reshape_text(f"Sales Person: {sp_display_name}"), border=0, ln=1, align="L")
                 pdf.ln(4)
                 draw_table_headers(pdf, buckets, name_w, bal_w, bucket_w, tot_w, sub_w)
