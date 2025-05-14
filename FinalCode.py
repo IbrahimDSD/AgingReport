@@ -555,8 +555,7 @@ def run_collection_report():
         if sp_search:
             sps = sps[
                 sps["name"].str.contains(sp_search, case=False, na=False) |
-                sps["recordid"].astype(str).str.contains(sp_search, case=False, na=False)|
-                sps["spRef"].astype(str).str.contains(sp_search, case=False, na=False)
+                sps["recordid"].astype(str).str.contains(sp_search, case=False, na=False)
             ]
             sp_options = ["All"] + sps["name"].tolist()
             if len(sps) == 1:
@@ -586,19 +585,20 @@ def run_collection_report():
             start_date_str = start_date.strftime('%Y-%m-%d')
             end_date_str = end_date.strftime('%Y-%m-%d')
 
+            # Use qmark (?) parameter style for pyodbc
             payment_query = """
                 SELECT f.recordid, f.reference, f.date, f.amount, f.currencyid, s.name AS sp_name, c.name AS customer_name
                 FROM fitrx f
                 LEFT JOIN sasp s ON f.spid = s.recordid
                 LEFT JOIN fiacc c ON f.accountid = c.recordid
-                WHERE f.date BETWEEN :start_date AND :end_date
+                WHERE f.date BETWEEN ? AND ?
                 AND f.amount > 0
-                AND (:sp_id IS NULL OR s.recordid = :sp_id)
+                AND (? IS NULL OR s.recordid = ?)
             """
             try:
                 st.write("Debug: Executing query:", payment_query)
-                st.write("Debug: Parameters:", {"start_date": start_date_str, "end_date": end_date_str, "sp_id": sp_id})
-                payments_df = pd.read_sql(payment_query, engine, params={"start_date": start_date_str, "end_date": end_date_str, "sp_id": sp_id})
+                st.write("Debug: Parameters:", (start_date_str, end_date_str, sp_id, sp_id))
+                payments_df = pd.read_sql(payment_query, engine, params=(start_date_str, end_date_str, sp_id, sp_id))
                 if payments_df.empty:
                     st.warning("No payment data found for the selected period.")
                     return
