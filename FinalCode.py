@@ -614,8 +614,8 @@ def run_collection_report():
                                COALESCE(s.name, 'Unknown') AS sp_name, 
                                COALESCE(c.name, 'Unknown') AS customer_name
                         FROM fitrx f
-                        LEFT JOIN sasp s ON f.spid = s.recordid
-                        LEFT JOIN fiacc c ON f.accountid = c.recordid
+                        left join fiacc c on c.recordId=f.accountId
+                        left join sasp s on s.recordId=c.spId
                         WHERE f.date BETWEEN :start_date AND :end_date
                         AND f.amount > 0
                         AND (s.recordid = :sp_id OR :sp_id IS NULL)
