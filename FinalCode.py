@@ -589,7 +589,7 @@ def run_collection_report():
                 left join sasp s on s.recordId=c.spId
                 WHERE f.date BETWEEN :start_date AND :end_date
                 AND f.amount > 0
-                AND (s.recordid = :sp_id OR :sp_id IS NULL)
+                AND (s.recordid = :sp_id )
             """
             payments_df = pd.read_sql(payment_query, engine, params={"start_date": start_date, "end_date": end_date, "sp_id": sp_id})
 
