@@ -24,7 +24,9 @@ import secrets
 from aging_report import create_db_engine, get_salespersons, get_customers, get_overdues, build_summary_pdf, build_detailed_pdf, create_pie_chart, create_bar_chart, format_number
 
 # Database Connection (Using Streamlit Secrets for secure credentials)
-USER_DB_URI = st.secrets.get("USER_DB_URI", "sqlite:///users.db")  # Fallback for local testing
+USER_DB_URI = st.secrets.get("sqlitecloud://cpran7d0hz.g2.sqlite.cloud:8860/"
+    "user_management.db?apikey=oUEez4Dc0TFsVVIVFu8SDRiXea9YVQLOcbzWBsUwZ78"
+                            )  # Fallback for local testing
 
 # Session Timeout Configuration (in seconds)
 SESSION_TIMEOUT = 1800  # 30 minutes
@@ -581,29 +583,20 @@ def run_collection_report():
 
     if generate_button:
         with st.spinner("Generating report..."):
-            # Convert dates to string format for SQL compatibility
-            start_date_str = start_date.strftime('%Y-%m-%d')
-            end_date_str = end_date.strftime('%Y-%m-%d')
-
-            # Use qmark (?) parameter style for pyodbc
+            # Fetch payment data (assuming fitrx contains payment transactions)
             payment_query = """
                 SELECT f.recordid, f.reference, f.date, f.amount, f.currencyid, s.name AS sp_name, c.name AS customer_name
                 FROM fitrx f
                 LEFT JOIN sasp s ON f.spid = s.recordid
                 LEFT JOIN fiacc c ON f.accountid = c.recordid
-                WHERE f.date BETWEEN ? AND ?
+                WHERE f.date BETWEEN :start_date AND :end_date
                 AND f.amount > 0
-                AND (? IS NULL OR s.recordid = ?)
+                AND (s.recordid = :sp_id OR :sp_id IS NULL)
             """
-            try:
-                st.write("Debug: Executing query:", payment_query)
-                st.write("Debug: Parameters:", (start_date_str, end_date_str, sp_id, sp_id))
-                payments_df = pd.read_sql(payment_query, engine, params=(start_date_str, end_date_str, sp_id, sp_id))
-                if payments_df.empty:
-                    st.warning("No payment data found for the selected period.")
-                    return
-            except Exception as e:
-                st.error(f"SQL Error: {str(e)}")
+            payments_df = pd.read_sql(payment_query, engine, params={"start_date": start_date, "end_date": end_date, "sp_id": sp_id})
+
+            if payments_df.empty:
+                st.warning("No payment data found for the selected period.")
                 return
 
             # Calculate total collected amounts per salesperson
