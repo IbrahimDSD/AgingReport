@@ -145,6 +145,7 @@ def validate_session_token(token):
     """Validate session token and check for expiry."""
     engine, err = create_user_db_engine()
     if err:
+        st.error(f"Database connection error: {err}")
         return None
     try:
         with engine.connect() as conn:
@@ -152,17 +153,27 @@ def validate_session_token(token):
                 "SELECT username, expiry FROM session_tokens WHERE token = :token"
             ), {"token": token})
             row = result.fetchone()
-            if row and row[1] > datetime.utcnow():
-                # Update last activity
-                conn.execute(text(
-                    "UPDATE users SET last_activity = CURRENT_TIMESTAMP WHERE username = :username"
-                ), {"username": row[0]})
-                conn.commit()
-                return row[0]  # Return username
-            else:
-                if row:  # Token exists but expired
+            if row:
+                expiry = row[1]
+                # Ensure expiry is a datetime object
+                if isinstance(expiry, str):
+                    expiry = datetime.fromisoformat(expiry.replace(' ', 'T'))
+                current_time = datetime.utcnow()
+                if expiry > current_time:
+                    # Update last activity
+                    conn.execute(text(
+                        "UPDATE users SET last_activity = CURRENT_TIMESTAMP WHERE username = :username"
+                    ), {"username": row[0]})
+                    conn.commit()
+                    return row[0]  # Return username
+                else:
+                    # Token exists but expired
                     conn.execute(text("DELETE FROM session_tokens WHERE token = :token"), {"token": token})
                     conn.commit()
+                    st.warning("Session token has expired.")
+                    return None
+            else:
+                st.warning("Invalid session token.")
                 return None
     except Exception as e:
         st.error(f"Error validating session token: {e}")
@@ -492,6 +503,7 @@ def change_password_interface():
             st.session_state.role = None
             st.session_state.reports_access = None
             st.session_state.password_change_required = False
+            time.sleep(1)
             st.rerun()
 
 # Login Interface
@@ -517,7 +529,8 @@ def login_interface():
                     st.session_state.role = get_user_role(username)
                     st.session_state.reports_access = get_user_reports_access(username)
                     st.session_state.password_change_required = check_password_change_required(username)
-                    st.success("Logged in successfully!")
+                    st.success("Logged in successfully! Redirecting to reports...")
+                    time.sleep(1)
                     st.rerun()
                 else:
                     st.error("Failed to generate session token.")
@@ -929,6 +942,7 @@ def main():
             st.session_state.reports_access = None
             st.session_state.password_change_required = False
             st.error("Session expired. Please log in again.")
+            time.sleep(1)
             st.rerun()
         else:
             st.session_state.username = username
@@ -949,8 +963,11 @@ def main():
                     st.session_state.role = None
                     st.session_state.reports_access = None
                     st.session_state.password_change_required = False
+                    st.success("Logged out successfully!")
+                    time.sleep(1)
                     st.rerun()
                 st.sidebar.markdown("---")
+                st.title("Welcome to NEG Reports System")
                 report_selection()
 
 if __name__ == "__main__":
