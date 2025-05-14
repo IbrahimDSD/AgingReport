@@ -555,7 +555,8 @@ def run_collection_report():
         if sp_search:
             sps = sps[
                 sps["name"].str.contains(sp_search, case=False, na=False) |
-                sps["recordid"].astype(str).str.contains(sp_search, case=False, na=False)
+                sps["recordid"].astype(str).str.contains(sp_search, case=False, na=False)|
+                sps["spRef"].astype(str).str.contains(sp_search, case=False, na=False)
             ]
             sp_options = ["All"] + sps["name"].tolist()
             if len(sps) == 1:
