@@ -582,7 +582,10 @@ def run_collection_report():
 
     if generate_button:
         with st.spinner("Generating report..."):
-            # Fetch payment data (assuming fitrx contains payment transactions)
+            # Convert dates to string format for SQL compatibility
+            start_date_str = start_date.strftime('%Y-%m-%d')
+            end_date_str = end_date.strftime('%Y-%m-%d')
+
             payment_query = """
                 SELECT f.recordid, f.reference, f.date, f.amount, f.currencyid, s.name AS sp_name, c.name AS customer_name
                 FROM fitrx f
@@ -590,12 +593,17 @@ def run_collection_report():
                 LEFT JOIN fiacc c ON f.accountid = c.recordid
                 WHERE f.date BETWEEN :start_date AND :end_date
                 AND f.amount > 0
-                AND (s.recordid = :sp_id OR :sp_id IS NULL)
+                AND (:sp_id IS NULL OR s.recordid = :sp_id)
             """
-            payments_df = pd.read_sql(payment_query, engine, params={"start_date": start_date, "end_date": end_date, "sp_id": sp_id})
-
-            if payments_df.empty:
-                st.warning("No payment data found for the selected period.")
+            try:
+                st.write("Debug: Executing query:", payment_query)
+                st.write("Debug: Parameters:", {"start_date": start_date_str, "end_date": end_date_str, "sp_id": sp_id})
+                payments_df = pd.read_sql(payment_query, engine, params={"start_date": start_date_str, "end_date": end_date_str, "sp_id": sp_id})
+                if payments_df.empty:
+                    st.warning("No payment data found for the selected period.")
+                    return
+            except Exception as e:
+                st.error(f"SQL Error: {str(e)}")
                 return
 
             # Calculate total collected amounts per salesperson
