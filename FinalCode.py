@@ -24,9 +24,7 @@ import secrets
 from aging_report import create_db_engine, get_salespersons, get_customers, get_overdues, build_summary_pdf, build_detailed_pdf, create_pie_chart, create_bar_chart, format_number
 
 # Database Connection (Using Streamlit Secrets for secure credentials)
-USER_DB_URI = st.secrets.get("sqlitecloud://cpran7d0hz.g2.sqlite.cloud:8860/"
-    "user_management.db?apikey=oUEez4Dc0TFsVVIVFu8SDRiXea9YVQLOcbzWBsUwZ78"
-                            )  # Fallback for local testing
+USER_DB_URI = st.secrets.get("USER_DB_URI", "sqlite:///users.db")  # Fallback for local testing
 
 # Session Timeout Configuration (in seconds)
 SESSION_TIMEOUT = 1800  # 30 minutes
@@ -542,194 +540,97 @@ def login_interface():
 # Collection Report Function
 def run_collection_report():
     st.subheader("📊 Collection Report")
-    
-    try:
-        engine, err = create_db_engine()
-        if err:
-            st.error("Connection error: " + err)
-            return
-            
-        with st.sidebar.expander("Select Criteria", expanded=True):
-            try:
-                sps = get_salespersons(engine)
-                sp_options = ["All"] + sps["name"].tolist()
-                sp_search = st.text_input("Search Sales Person (Name or Ref)", placeholder="Enter name or ref to search...", key="sp_search_collection")
-                sel = None
-                show_sp_selectbox = True
+    engine, err = create_db_engine()
+    if err:
+        st.error("Connection error: " + err)
+        return
 
-                if sp_search:
-                    sps = sps[
-                        sps["name"].str.contains(sp_search, case=False, na=False) |
-                        sps["recordid"].astype(str).str.contains(sp_search, case=False, na=False)
-                    ]
-                    sp_options = ["All"] + sps["name"].tolist()
-                    if len(sps) == 1:
-                        sel = sps["name"].iloc[0]
-                        st.write(f"Selected Sales Person: {sel}")
-                        show_sp_selectbox = False
-                    elif len(sps) == 0:
-                        st.warning("No matching salespersons found.")
-                        sp_options = ["All"]
+    with st.sidebar.expander("Select Criteria", expanded=True):
+        sps = get_salespersons(engine)
+        sp_options = ["All"] + sps["name"].tolist()
+        sp_search = st.text_input("Search Sales Person (Name or Ref)", placeholder="Enter name or ref to search...", key="sp_search_collection")
+        sel = None
+        show_sp_selectbox = True
 
-                if show_sp_selectbox:
-                    sel = st.selectbox("Sales Person", sp_options, key="sp_select_collection")
+        if sp_search:
+            sps = sps[
+                sps["name"].str.contains(sp_search, case=False, na=False) |
+                sps["spRef"].astype(str).str.contains(sp_search, case=False, na=False)
+            ]
+            sp_options = ["All"] + sps["name"].tolist()
+            if len(sps) == 1:
+                sel = sps["name"].iloc[0]
+                st.write(f"Selected Sales Person: {sel}")
+                show_sp_selectbox = False
+            elif len(sps) == 0:
+                st.warning("No matching salespersons found.")
+                sp_options = ["All"]
 
-                sp_id = None if sel == "All" else (int(sps.loc[sps["name"] == sel, "recordid"].iloc[0]) if not sps.empty else None)
-            except Exception as e:
-                st.error(f"Error loading salespersons: {str(e)}")
-                sp_id = None
-                sel = "All"
+        if show_sp_selectbox:
+            sel = st.selectbox("Sales Person", sp_options, key="sp_select_collection")
 
-            start_date = st.date_input("Start Date", date(2025, 5, 1), key="start_date_collection")
-            end_date = st.date_input("End Date", date(2025, 5, 14), key="end_date_collection")
-            grace = st.number_input("Grace Period (Days)", 0, 100, 30, key="grace_collection")
+        sp_id = None if sel == "All" else (int(sps.loc[sps["name"] == sel, "recordid"].iloc[0]) if not sps.empty else None)
 
-        col1, col2 = st.columns([3, 1])
-        with col2:
-            generate_button = st.button("Generate Report", use_container_width=True, key="generate_collection")
+        start_date = st.date_input("Start Date", date(2025, 5, 1), key="start_date_collection")
+        end_date = st.date_input("End Date", date(2025, 5, 14), key="end_date_collection")
+        grace = st.number_input("Grace Period (Days)", 0, 100, 30, key="grace_collection")
 
-        if generate_button:
-            with st.spinner("Generating report..."):
-                try:
-                    # First check if the table exists
-                    check_query = """
-                        SELECT name FROM sqlite_master WHERE type='table' AND name='fitrx'
-                    """
-                    
-                    try:
-                        with engine.connect() as conn:
-                            result = conn.execute(text(check_query))
-                            table_exists = result.fetchone() is not None
-                            
-                            if not table_exists:
-                                st.error("Required table 'fitrx' not found in the database.")
-                                return
-                    except Exception as e:
-                        st.error(f"Error checking table existence: {str(e)}")
-                        return
-                    
-                    # Fetch payment data with better error handling
-                    payment_query = """
-                        SELECT f.recordid, f.reference, f.date, f.amount, f.currencyid, 
-                               COALESCE(s.name, 'Unknown') AS sp_name, 
-                               COALESCE(c.name, 'Unknown') AS customer_name
-                        FROM fitrx f
-                        left join fiacc c on c.recordId=f.accountId
-                        left join sasp s on s.recordId=c.spId
-                        WHERE f.date BETWEEN :start_date AND :end_date
-                        AND f.amount > 0
-                        AND (s.recordid = :sp_id OR :sp_id IS NULL)
-                    """
-                    
-                    try:
-                        payments_df = pd.read_sql(payment_query, engine, params={
-                            "start_date": start_date.strftime('%Y-%m-%d'), 
-                            "end_date": end_date.strftime('%Y-%m-%d'), 
-                            "sp_id": sp_id
-                        })
-                    except Exception as e:
-                        st.error(f"Error executing payment query: {str(e)}")
-                        
-                        # Fallback with a simpler query if the join fails
-                        fallback_query = """
-                            SELECT recordid, reference, date, amount, currencyid, 
-                                   NULL AS sp_name, NULL AS customer_name
-                            FROM fitrx
-                            WHERE date BETWEEN :start_date AND :end_date
-                            AND amount > 0
-                        """
-                        try:
-                            st.warning("Attempting fallback query without joins...")
-                            payments_df = pd.read_sql(fallback_query, engine, params={
-                                "start_date": start_date.strftime('%Y-%m-%d'), 
-                                "end_date": end_date.strftime('%Y-%m-%d')
-                            })
-                            payments_df["sp_name"] = payments_df["sp_name"].fillna("Unknown")
-                            payments_df["customer_name"] = payments_df["customer_name"].fillna("Unknown")
-                        except Exception as e2:
-                            st.error(f"Fallback query failed: {str(e2)}")
-                            return
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        generate_button = st.button("Generate Report", use_container_width=True, key="generate_collection")
 
-                    if payments_df.empty:
-                        st.warning("No payment data found for the selected period.")
-                        return
+    if generate_button:
+        with st.spinner("Generating report..."):
+            # Fetch payment data (assuming fitrx contains payment transactions)
+            payment_query = """
+                SELECT f.recordid, f.reference, f.date, f.amount, f.currencyid, s.name AS sp_name, c.name AS customer_name
+                FROM fitrx f
+                left join fiacc c on c.recordId=f.accountId
+                left join sasp s on s.recordId=c.spId
+                WHERE f.date BETWEEN :start_date AND :end_date
+                AND f.amount > 0
+                AND (s.recordid = :sp_id OR :sp_id IS NULL)
+            """
+            payments_df = pd.read_sql(payment_query, engine, params={"start_date": start_date, "end_date": end_date, "sp_id": sp_id})
 
-                    # Calculate total collected amounts per salesperson
-                    sp_totals = payments_df.groupby('sp_name')['amount'].sum().reset_index()
-                    sp_totals.columns = ['Sales Person', 'Total Collected (EGP)']
-                    sp_totals['Total Collected (EGP)'] = sp_totals['Total Collected (EGP)'].apply(format_number)
-                    st.subheader("Total Amounts Collected by Sales Person")
-                    st.dataframe(sp_totals, use_container_width=True)
+            if payments_df.empty:
+                st.warning("No payment data found for the selected period.")
+                return
 
-                    # Calculate overdue buckets (15, 30, 45, 60 days)
-                    current_date = date(2025, 5, 14)  # Today's date as per system
-                    
-                    # Convert date column to datetime if it's not already
-                    if not pd.api.types.is_datetime64_any_dtype(payments_df['date']):
-                        try:
-                            payments_df['date'] = pd.to_datetime(payments_df['date'], errors='coerce')
-                        except Exception as e:
-                            st.error(f"Error converting dates: {str(e)}")
-                            payments_df['date'] = pd.to_datetime('2025-05-14')  # Default to today on error
-                    
-                    # Calculate days overdue with safe handling of NaT values
-                    payments_df['days_overdue'] = payments_df['date'].apply(
-                        lambda x: (current_date - x.date()).days - grace if pd.notna(x) else 0
-                    )
-                    
-                    # Create buckets safely
-                    try:
-                        payments_df['bucket'] = pd.cut(
-                            payments_df['days_overdue'], 
-                            bins=[-float('inf'), 15, 30, 45, 60, float('inf')], 
-                            labels=['0-15', '16-30', '31-45', '46-60', '>60']
-                        )
-                    except Exception as e:
-                        st.error(f"Error creating overdue buckets: {str(e)}")
-                        # Fallback manual bucketing
-                        conditions = [
-                            (payments_df['days_overdue'] <= 15),
-                            (payments_df['days_overdue'] > 15) & (payments_df['days_overdue'] <= 30),
-                            (payments_df['days_overdue'] > 30) & (payments_df['days_overdue'] <= 45),
-                            (payments_df['days_overdue'] > 45) & (payments_df['days_overdue'] <= 60),
-                            (payments_df['days_overdue'] > 60)
-                        ]
-                        choices = ['0-15', '16-30', '31-45', '46-60', '>60']
-                        payments_df['bucket'] = np.select(conditions, choices, default='0-15')
+            # Calculate total collected amounts per salesperson
+            sp_totals = payments_df.groupby('sp_name')['amount'].sum().reset_index()
+            sp_totals.columns = ['Sales Person', 'Total Collected (EGP)']
+            sp_totals['Total Collected (EGP)'] = sp_totals['Total Collected (EGP)'].apply(format_number)
+            st.subheader("Total Amounts Collected by Sales Person")
+            st.dataframe(sp_totals, use_container_width=True)
 
-                    # Aggregate overdue amounts per salesperson with error handling
-                    try:
-                        overdue_summary = payments_df.groupby(['sp_name', 'bucket'])['amount'].sum().unstack(fill_value=0).reset_index()
-                        overdue_columns = ['Sales Person'] + [f'Overdue {col} Days (EGP)' for col in overdue_summary.columns[1:]]
-                        overdue_summary.columns = overdue_columns
-                        for col in overdue_columns[1:]:
-                            overdue_summary[col] = overdue_summary[col].apply(format_number)
-                        st.subheader("Overdue Amounts by Sales Person")
-                        st.dataframe(overdue_summary, use_container_width=True)
-                    except Exception as e:
-                        st.error(f"Error generating overdue summary: {str(e)}")
-                        st.write("Raw data preview:")
-                        st.dataframe(payments_df.head(10), use_container_width=True)
+            # Calculate overdue buckets (15, 30, 45, 60 days)
+            current_date = date(2025, 5, 14)  # Today's date as per system
+            payments_df['days_overdue'] = (current_date - pd.to_datetime(payments_df['date']).dt.date).dt.days - grace
+            payments_df['bucket'] = pd.cut(payments_df['days_overdue'], 
+                                          bins=[-1, 15, 30, 45, 60, float('inf')], 
+                                          labels=['0-15', '16-30', '31-45', '46-60', '>60'], 
+                                          right=False)
 
-                    # List customers per overdue bucket
-                    try:
-                        st.subheader("Customers by Overdue Period")
-                        for bucket in ['0-15', '16-30', '31-45', '46-60', '>60']:
-                            bucket_data = payments_df[payments_df['bucket'] == bucket]
-                            if not bucket_data.empty:
-                                customers_in_bucket = bucket_data['customer_name'].dropna().unique()
-                                st.markdown(f"**Customers with Overdue Payments ({bucket} Days):**")
-                                st.write(", ".join(customers_in_bucket) if customers_in_bucket.size > 0 else "No customers found.")
-                            else:
-                                st.markdown(f"**Customers with Overdue Payments ({bucket} Days):** No customers found.")
-                    except Exception as e:
-                        st.error(f"Error listing customers by overdue bucket: {str(e)}")
-                
-                except Exception as e:
-                    st.error(f"Error generating collection report: {str(e)}")
-                    
-    except Exception as e:
-        st.error(f"An unexpected error occurred: {str(e)}")
+            # Aggregate overdue amounts per salesperson
+            overdue_summary = payments_df.groupby(['sp_name', 'bucket'])['amount'].sum().unstack(fill_value=0).reset_index()
+            overdue_columns = ['Sales Person'] + [f'Overdue {col} Days (EGP)' for col in overdue_summary.columns[1:]]
+            overdue_summary.columns = overdue_columns
+            for col in overdue_columns[1:]:
+                overdue_summary[col] = overdue_summary[col].apply(format_number)
+            st.subheader("Overdue Amounts by Sales Person")
+            st.dataframe(overdue_summary, use_container_width=True)
+
+            # List customers per overdue bucket
+            st.subheader("Customers by Overdue Period")
+            for bucket in ['0-15', '16-30', '31-45', '46-60', '>60']:
+                bucket_data = payments_df[payments_df['bucket'] == bucket]
+                if not bucket_data.empty:
+                    customers_in_bucket = bucket_data['customer_name'].dropna().unique()
+                    st.markdown(f"**Customers with Overdue Payments ({bucket} Days):**")
+                    st.write(", ".join(customers_in_bucket) if customers_in_bucket.size > 0 else "No customers found.")
+                else:
+                    st.markdown(f"**Customers with Overdue Payments ({bucket} Days):** No customers found.")
 
 # Aging Report Function
 def run_aging_report():
