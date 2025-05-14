@@ -584,16 +584,33 @@ def run_collection_report():
     if generate_button:
         with st.spinner("Generating report..."):
             # Fetch payment data (assuming fitrx contains payment transactions)
-            payment_query = """
-                SELECT f.recordid, f.reference, f.date, f.amount, f.currencyid, s.name AS sp_name, c.name AS customer_name
-                FROM fitrx f
-                LEFT JOIN sasp s ON f.spid = s.recordid
-                LEFT JOIN fiacc c ON f.accountid = c.recordid
-                WHERE f.date BETWEEN :start_date AND :end_date
-                AND f.amount > 0
-                AND (s.recordid = :sp_id OR :sp_id IS NULL)
-            """
-            payments_df = pd.read_sql(payment_query, engine, params={"start_date": start_date, "end_date": end_date, "sp_id": sp_id})
+            
+
+        payment_query = text("""
+         SELECT 
+         f.recordid,
+        f.reference,
+        f.[date]       AS payment_date,
+        f.amount,
+        f.currencyid,
+        s.name         AS sp_name,
+       c.name         AS customer_name
+      FROM fitrx f
+    LEFT JOIN sasp s ON f.spid     = s.recordid
+    LEFT JOIN fiacc c ON f.accountid= c.recordid
+    WHERE f.[date] BETWEEN :start_date AND :end_date
+      AND f.amount   > 0
+      AND (:sp_id IS NULL OR s.recordid = :sp_id)
+      """)
+
+      params = {
+      "start_date": start_date,
+       "end_date":   end_date,
+    "   sp_id":      sp_id
+    }
+
+              payments_df = pd.read_sql(payment_query, engine, params=params)
+
 
             if payments_df.empty:
                 st.warning("No payment data found for the selected period.")
