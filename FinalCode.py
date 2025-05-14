@@ -524,7 +524,7 @@ def login_interface():
             else:
                 st.error("Incorrect username or password")
 
-# Collection Report Function (New)
+# Collection Report Function
 def run_collection_report():
     st.subheader("📊 Collection Report")
     engine, err = create_db_engine()
@@ -902,9 +902,19 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
+
+    # Initialize all session state variables to prevent AttributeError
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
+    if "session_token" not in st.session_state:
         st.session_state.session_token = None
+    if "username" not in st.session_state:
+        st.session_state.username = None
+    if "role" not in st.session_state:
+        st.session_state.role = None
+    if "reports_access" not in st.session_state:
+        st.session_state.reports_access = None
+    if "password_change_required" not in st.session_state:
         st.session_state.password_change_required = False
 
     if not st.session_state.logged_in or not st.session_state.session_token:
