@@ -305,7 +305,7 @@ def create_pdf_with_arabic_support(df, grouped=False, username="System User", ex
     if execution_datetime is None:
         execution_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    font_path = r'D:\FinalCode-main\FinalCode-main\dejavu-sans\DejaVuSans.ttf'
+    font_path = r'DejaVuSans.ttf'
     font_name = 'DejaVu'
 
     pdf = CustomPDF(username, execution_datetime, orientation='L', unit='mm', format='A4')
@@ -923,5 +923,6 @@ def generate_cached_pdf(df_dict, grouped, username, execution_datetime):
 
 if __name__ == "__main__":
     main()
+
 
 
