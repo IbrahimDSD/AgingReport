@@ -281,7 +281,7 @@ class CustomPDF(FPDF):
     def header(self):
         self.set_font('DejaVu', '', 9)
         self.set_fill_color(230, 230, 250)
-        self.cell(0, 10, get_display(arabic_reshaper.reshape("Job Reference")), 0, 1, 'C', True)
+        self.cell(0, 10, get_display(arabic_reshaper.reshape("Summary WorkSheet By WorkCenter")), 0, 1, 'C', True)
         self.ln(2)
 
         # Print table headers
@@ -301,7 +301,7 @@ class CustomPDF(FPDF):
 
 
 def create_pdf_with_arabic_support(df, grouped=False, username="System User", execution_datetime=None):
-
+    import math
 
     if execution_datetime is None:
         execution_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -325,14 +325,25 @@ def create_pdf_with_arabic_support(df, grouped=False, username="System User", ex
         except Exception:
             return txt
 
-    # استثناء الأعمدة المحددة
-    exclude_columns =exclude_columns = ['WorkSheetId', 'StartTime', 'EndTime', 'JobId', 'WorkCenterName', 'PostingStatus']
+    # استخدم قائمة الأعمدة التي طلبتها
+    exclude_columns = ['WorkSheetId', 'StartTime', 'EndTime', 'JobId', 'PostingStatus']
     df = df.drop(columns=[col for col in exclude_columns if col in df.columns])
 
-    total_gold = 0
-    total_add = 0
+    total_gold = 0.0
+    total_add = 0.0
 
-    # فرض التجميع حسب WorkCenterName
+    # دالة مساعدة لتنسيق الأرقام كـ 123,452.253
+    def fmt_num(val):
+        try:
+            v = float(val)
+            # تجنب -0.000
+            if math.isclose(v, 0.0, abs_tol=1e-12):
+                v = 0.0
+            return f"{v:,.3f}"
+        except Exception:
+            return None
+
+    # فرض التجميع حسب WorkCenterName إذا موجودة
     if 'WorkCenterName' in df.columns:
         grouped_df = df.groupby('WorkCenterName')
 
@@ -343,19 +354,24 @@ def create_pdf_with_arabic_support(df, grouped=False, username="System User", ex
             pdf.cell(0, 8, f"{safe_text('Work Center')}: {safe_text(work_center)}", 0, 1, 'L', True)
             pdf.ln(1)
 
-            # 2. ملخص المجموعة
-            gold_sum = group['Qty_Gold'].sum() if 'Qty_Gold' in group.columns else 0
-            add_sum = group['Qty_Add'].sum() if 'Qty_Add' in group.columns else 0
+            # 2. ملخص المجموعة (قيمة عدد الأوراق، العناصر، المجموع الفرعي)
+            gold_sum = group['Qty_Gold'].sum() if 'Qty_Gold' in group.columns else 0.0
+            add_sum = group['Qty_Add'].sum() if 'Qty_Add' in group.columns else 0.0
             unique_items = group['ItemRef'].nunique() if 'ItemRef' in group.columns else 0
 
             pdf.set_font(font_name, '', 8)
-            summary_text = f"{safe_text('Worksheets')}: {len(group)} | {safe_text('Items')}: {unique_items} | {safe_text('Gold')}: {gold_sum:.3f} | {safe_text('Add')}: {add_sum:.3f}"
+            summary_text = f"{safe_text('Worksheets')}: {len(group)} | {safe_text('Items')}: {unique_items} | {safe_text('Gold')}: {fmt_num(gold_sum) or format(gold_sum, '.3f')} | {safe_text('Add')}: {fmt_num(add_sum) or format(add_sum,'.3f')}"
             pdf.cell(0, 6, summary_text, 0, 1, 'L')
             pdf.ln(1)
 
             # 3. رؤوس الأعمدة لكل مجموعة
             display_df = group.drop(columns=['WorkCenterName']) if 'WorkCenterName' in group.columns else group.copy()
             headers = list(display_df.columns)
+            if len(headers) == 0:
+                # لا أعمدة لعرضها
+                pdf.ln(2)
+                continue
+
             col_width = (pdf.w - 20) / len(headers)
             pdf.headers = headers
             pdf.col_width = col_width
@@ -366,23 +382,52 @@ def create_pdf_with_arabic_support(df, grouped=False, username="System User", ex
                 pdf.cell(col_width, 5, safe_text(col), 1, 0, 'C', True)
             pdf.ln()
 
-            # 4. صفوف البيانات
+            # 4. صفوف البيانات (مع تنسيق الأرقام)
             pdf.set_font(font_name, '', 6)
             pdf.set_fill_color(245, 245, 245)
             for i, (_, row) in enumerate(display_df.iterrows()):
                 fill = i % 2 == 0
                 for col in headers:
-                    cell_value = safe_text(str(row[col]) if not pd.isna(row[col]) else "")
-                    if len(cell_value) > 12:
-                        cell_value = cell_value[:9] + "..."
+                    raw_val = row[col]
+                    # حاول تنسيق كرقم أولاً
+                    num_formatted = fmt_num(raw_val)
+                    if num_formatted is not None:
+                        cell_value = num_formatted
+                    else:
+                        # نصي: اقتطاع لو طويل
+                        cell_value = safe_text(str(raw_val) if not pd.isna(raw_val) else "")
+                        if len(cell_value) > 20:
+                            cell_value = cell_value[:17] + "..."
                     pdf.cell(col_width, 5, cell_value, 1, 0, 'C', fill)
 
-                    # تجميع الإجماليات
+                    # تجميع الإجماليات العامة
                     if col == 'Qty_Gold':
-                        total_gold += float(row[col]) if not pd.isna(row[col]) else 0
+                        try:
+                            total_gold += float(raw_val) if not pd.isna(raw_val) else 0.0
+                        except Exception:
+                            pass
                     if col == 'Qty_Add':
-                        total_add += float(row[col]) if not pd.isna(row[col]) else 0
+                        try:
+                            total_add += float(raw_val) if not pd.isna(raw_val) else 0.0
+                        except Exception:
+                            pass
                 pdf.ln()
+
+            # --- صف المجموع الفرعي لكل مجموعة ---
+            pdf.ln(1)
+            pdf.set_font(font_name, 'B', 6)
+            pdf.set_fill_color(210, 235, 210)  # خلفية مميزة للمجموع الفرعي
+            # أول خلية: تسمية المجموع الفرعي (بالعربية)
+            pdf.cell(col_width, 6, safe_text("SubTotal"), 1, 0, 'C', True)
+
+            for col in headers[1:]:
+                if col == 'Qty_Gold':
+                    pdf.cell(col_width, 6, fmt_num(gold_sum) or f"{gold_sum:.3f}", 1, 0, 'C', True)
+                elif col == 'Qty_Add':
+                    pdf.cell(col_width, 6, fmt_num(add_sum) or f"{add_sum:.3f}", 1, 0, 'C', True)
+                else:
+                    pdf.cell(col_width, 6, "", 1, 0, 'C', True)
+            pdf.ln()
 
             # فاصل بين المجموعات
             pdf.ln(3)
@@ -390,9 +435,11 @@ def create_pdf_with_arabic_support(df, grouped=False, username="System User", ex
             pdf.cell(0, 1, "", 0, 1, 'C', True)  # خط فاصل
             pdf.ln(2)
     else:
-        # في حالة عدم وجود WorkCenterName
+        # حالة عدم وجود WorkCenterName
         display_df = df.copy()
         headers = list(display_df.columns)
+        if len(headers) == 0:
+            return bytes(pdf.output(dest='S'))
         col_width = (pdf.w - 20) / len(headers)
         pdf.headers = headers
         pdf.col_width = col_width
@@ -408,15 +455,26 @@ def create_pdf_with_arabic_support(df, grouped=False, username="System User", ex
         for i, (_, row) in enumerate(display_df.iterrows()):
             fill = i % 2 == 0
             for col in headers:
-                cell_value = safe_text(str(row[col]) if not pd.isna(row[col]) else "")
-                if len(cell_value) > 12:
-                    cell_value = cell_value[:9] + "..."
+                raw_val = row[col]
+                num_formatted = fmt_num(raw_val)
+                if num_formatted is not None:
+                    cell_value = num_formatted
+                else:
+                    cell_value = safe_text(str(raw_val) if not pd.isna(raw_val) else "")
+                    if len(cell_value) > 20:
+                        cell_value = cell_value[:17] + "..."
                 pdf.cell(col_width, 5, cell_value, 1, 0, 'C', fill)
 
                 if col == 'Qty_Gold':
-                    total_gold += float(row[col]) if not pd.isna(row[col]) else 0
+                    try:
+                        total_gold += float(raw_val) if not pd.isna(raw_val) else 0.0
+                    except Exception:
+                        pass
                 if col == 'Qty_Add':
-                    total_add += float(row[col]) if not pd.isna(row[col]) else 0
+                    try:
+                        total_add += float(raw_val) if not pd.isna(raw_val) else 0.0
+                    except Exception:
+                        pass
             pdf.ln()
 
     # صف الإجمالي العام
@@ -424,14 +482,13 @@ def create_pdf_with_arabic_support(df, grouped=False, username="System User", ex
     pdf.set_font(font_name, 'B', 7)
     pdf.set_fill_color(220, 220, 220)
 
-    # التأكد من وجود headers
     if 'headers' in locals():
         pdf.cell(col_width, 5, safe_text("Grand Total"), 1, 0, 'C', True)
         for col in headers[1:]:
             if col == 'Qty_Gold':
-                pdf.cell(col_width, 5, f"{total_gold:.3f}", 1, 0, 'C', True)
+                pdf.cell(col_width, 5, fmt_num(total_gold) or f"{total_gold:.3f}", 1, 0, 'C', True)
             elif col == 'Qty_Add':
-                pdf.cell(col_width, 5, f"{total_add:.3f}", 1, 0, 'C', True)
+                pdf.cell(col_width, 5, fmt_num(total_add) or f"{total_add:.3f}", 1, 0, 'C', True)
             else:
                 pdf.cell(col_width, 5, "", 1, 0, 'C', True)
         pdf.ln()
@@ -890,6 +947,7 @@ def generate_cached_pdf(df_dict, grouped, username, execution_datetime):
 
 if __name__ == "__main__":
     main()
+
 
 
 
