@@ -302,6 +302,7 @@ class CustomPDF(FPDF):
 
 def create_pdf_with_arabic_support(df, grouped=False, username="System User", execution_datetime=None):
 
+
     if execution_datetime is None:
         execution_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -325,7 +326,7 @@ def create_pdf_with_arabic_support(df, grouped=False, username="System User", ex
             return txt
 
     # استثناء الأعمدة المحددة
-    exclude_columns = ['WorkSheetId', 'StartTime', 'EndTime', 'JobId', 'WorkCenterName', 'PostingStatus']
+    exclude_columns =exclude_columns = ['WorkSheetId', 'StartTime', 'EndTime', 'JobId', 'WorkCenterName', 'PostingStatus']
     df = df.drop(columns=[col for col in exclude_columns if col in df.columns])
 
     total_gold = 0
@@ -355,9 +356,6 @@ def create_pdf_with_arabic_support(df, grouped=False, username="System User", ex
             # 3. رؤوس الأعمدة لكل مجموعة
             display_df = group.drop(columns=['WorkCenterName']) if 'WorkCenterName' in group.columns else group.copy()
             headers = list(display_df.columns)
-            # حماية من قسمة على صفر
-            if len(headers) == 0:
-                continue
             col_width = (pdf.w - 20) / len(headers)
             pdf.headers = headers
             pdf.col_width = col_width
@@ -379,35 +377,12 @@ def create_pdf_with_arabic_support(df, grouped=False, username="System User", ex
                         cell_value = cell_value[:9] + "..."
                     pdf.cell(col_width, 5, cell_value, 1, 0, 'C', fill)
 
-                    # تجميع الإجماليات العامة
+                    # تجميع الإجماليات
                     if col == 'Qty_Gold':
-                        try:
-                            total_gold += float(row[col]) if not pd.isna(row[col]) else 0
-                        except Exception:
-                            pass
+                        total_gold += float(row[col]) if not pd.isna(row[col]) else 0
                     if col == 'Qty_Add':
-                        try:
-                            total_add += float(row[col]) if not pd.isna(row[col]) else 0
-                        except Exception:
-                            pass
+                        total_add += float(row[col]) if not pd.isna(row[col]) else 0
                 pdf.ln()
-
-            # --- هنا نضيف صف المجموع الفرعي لكل مجموعة ---
-            pdf.ln(1)
-            pdf.set_font(font_name, 'B', 6)
-            pdf.set_fill_color(210, 235, 210)  # لون خلفية مميز للمجموع الفرعي
-            # أول خلية: تسمية المجموع الفرعي
-            pdf.cell(col_width, 6, safe_text("المجموع الفرعي"), 1, 0, 'C', True)
-
-            # بقية الأعمدة: إما قيم المجموع الفرعي أو خانات فارغة
-            for col in headers[1:]:
-                if col == 'Qty_Gold':
-                    pdf.cell(col_width, 6, f"{gold_sum:.3f}", 1, 0, 'C', True)
-                elif col == 'Qty_Add':
-                    pdf.cell(col_width, 6, f"{add_sum:.3f}", 1, 0, 'C', True)
-                else:
-                    pdf.cell(col_width, 6, "", 1, 0, 'C', True)
-            pdf.ln()
 
             # فاصل بين المجموعات
             pdf.ln(3)
@@ -418,8 +393,6 @@ def create_pdf_with_arabic_support(df, grouped=False, username="System User", ex
         # في حالة عدم وجود WorkCenterName
         display_df = df.copy()
         headers = list(display_df.columns)
-        if len(headers) == 0:
-            return bytes(pdf.output(dest='S'))
         col_width = (pdf.w - 20) / len(headers)
         pdf.headers = headers
         pdf.col_width = col_width
@@ -441,15 +414,9 @@ def create_pdf_with_arabic_support(df, grouped=False, username="System User", ex
                 pdf.cell(col_width, 5, cell_value, 1, 0, 'C', fill)
 
                 if col == 'Qty_Gold':
-                    try:
-                        total_gold += float(row[col]) if not pd.isna(row[col]) else 0
-                    except Exception:
-                        pass
+                    total_gold += float(row[col]) if not pd.isna(row[col]) else 0
                 if col == 'Qty_Add':
-                    try:
-                        total_add += float(row[col]) if not pd.isna(row[col]) else 0
-                    except Exception:
-                        pass
+                    total_add += float(row[col]) if not pd.isna(row[col]) else 0
             pdf.ln()
 
     # صف الإجمالي العام
@@ -923,6 +890,7 @@ def generate_cached_pdf(df_dict, grouped, username, execution_datetime):
 
 if __name__ == "__main__":
     main()
+
 
 
 
