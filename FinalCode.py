@@ -808,13 +808,6 @@ def main():
         # Prepare exports section with buttons to generate files
         col_prep1, col_prep2 = st.columns(2)
 
-        with col_prep1:
-            if st.button("🔄 Prepare Excel File", use_container_width=True, help="Generate Excel file for download"):
-                with st.spinner("Generating Excel file..."):
-                    excel_data = create_excel_download(df, grouped=group_by_center)
-                    st.session_state.excel_data = excel_data
-                    st.success("✅ Excel file ready for download!")
-
         with col_prep2:
             if st.button("🔄 Prepare PDF File", use_container_width=True, help="Generate PDF file for download"):
                 with st.spinner("Generating PDF file..."):
@@ -947,6 +940,7 @@ def generate_cached_pdf(df_dict, grouped, username, execution_datetime):
 
 if __name__ == "__main__":
     main()
+
 
 
 
