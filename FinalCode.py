@@ -326,8 +326,7 @@ def create_pdf_with_arabic_support(df, grouped=False, username="System User", ex
             return txt
 
     # استثناء الأعمدة المحددة
-    exclude_columns = ['PostingStatus', 'id', 'ID', 'Id', 'start_date', 'Start_Date', 'StartDate', 'end_date',
-                       'End_Date', 'EndDate']
+    exclude_columns = ['PostingStatus','WorkSheetID','JobID','StartTime','endtime']
     df = df.drop(columns=[col for col in exclude_columns if col in df.columns])
 
     total_gold = 0
@@ -890,3 +889,4 @@ def generate_cached_pdf(df_dict, grouped, username, execution_datetime):
 
 if __name__ == "__main__":
     main()
+
