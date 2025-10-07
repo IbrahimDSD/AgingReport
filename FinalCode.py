@@ -641,7 +641,7 @@ def main():
     """Main Streamlit application"""
 
     # Title and description
-    st.title("📊 Work Sheet Report with Advanced Search")
+    st.title("📊 Details WorkSheet Report")
     st.markdown("---")
 
     # Get filter options
@@ -651,18 +651,19 @@ def main():
     with st.sidebar:
         st.header("🔍 Report Parameters")
 
+        today = datetime.now().date()
         # Date inputs
         col1, col2 = st.columns(2)
         with col1:
             from_date = st.date_input(
                 "From Date",
-                value=date(2025, 7, 1),
+                value=today.replace(day=1),
                 help="Select start date"
             )
         with col2:
             to_date = st.date_input(
                 "To Date",
-                value=date(2025, 7, 31),
+                value=today,
                 help="Select end date"
             )
 
@@ -769,10 +770,10 @@ def main():
                 st.metric("Unique Worksheets", unique_worksheets)
             with col3:
                 total_gold = df['Qty_Gold'].sum()
-                st.metric("Total Gold Qty", f"{total_gold:.3f}")
+                st.metric("Total Gold Qty", f"{total_gold:,.3f}")
             with col4:
                 g21_add_qty = df[df['Metal'] == 'G21']['Qty_Add'].sum() if 'Metal' in df.columns else 0
-                st.metric("G21 Add Qty", f"{g21_add_qty:.3f}")
+                st.metric("G21 Add Qty", f"{g21_add_qty:,.3f}")
 
         # Display data table
         st.subheader("📋 Report Data")
@@ -793,9 +794,9 @@ def main():
                     with col2:
                         st.metric("Unique Items", center_data['ItemRef'].nunique())
                     with col3:
-                        st.metric("Total Gold", f"{center_data['Qty_Gold'].sum():.3f}")
+                        st.metric("Total Gold", f"{center_data['Qty_Gold'].sum():,.3f}")
                     with col4:
-                        st.metric("Total Add", f"{center_data['Qty_Add'].sum():.3f}")
+                        st.metric("Total Add", f"{center_data['Qty_Add'].sum():,.3f}")
 
                     st.dataframe(center_display, use_container_width=True)
                     st.markdown("---")
@@ -940,6 +941,7 @@ def generate_cached_pdf(df_dict, grouped, username, execution_datetime):
 
 if __name__ == "__main__":
     main()
+
 
 
 
