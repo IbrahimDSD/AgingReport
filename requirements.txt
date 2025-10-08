@@ -10,3 +10,4 @@ arabic-reshaper
 python-bidi
 matplotlib
 sqlalchemy-sqlitecloud
+plotly
