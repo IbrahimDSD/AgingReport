@@ -1005,11 +1005,32 @@ def get_collections_report_data(cash_apps, gold_apps, raw, start_date, end_date,
 
     raw = raw[~raw.apply(is_scrap_return, axis=1)]
 
+    # Store detailed transactions for analysis
+    detailed_transactions = {
+        'cash_collections': [],
+        'gold_collections': [],
+        'sales_returns': [],
+        'discounts': [],
+        'unmatched_transactions': []
+    }
+
     cash_credits_raw = raw[(raw['amount'] < 0) & (raw['currencyid'] == 1) &
                            (raw['date'] >= start_ts) & (raw['date'] <= end_ts)]
     if accountid is not None:
         cash_credits_raw = cash_credits_raw[cash_credits_raw['accountid'] == accountid]
     total_cash_collections = -cash_credits_raw['amount'].sum()
+
+    # Store cash collection details
+    for _, row in cash_credits_raw.iterrows():
+        detailed_transactions['cash_collections'].append({
+            'date': row['date'],
+            'reference': row['reference'],
+            'amount': -row['amount'],
+            'currency': 'EGP',
+            'accountid': row['accountid'],
+            'functionid': row.get('FUNCTIONID', ''),
+            'plantid': row.get('plantid', '')
+        })
 
     gold_credits_raw = raw[(raw['amount'] < 0) & (raw['currencyid'] != 1) &
                            (raw['date'] >= start_ts) & (raw['date'] <= end_ts)]
@@ -1020,9 +1041,34 @@ def get_collections_report_data(cash_apps, gold_apps, raw, start_date, end_date,
     )
     total_gold_collections = gold_credits_raw['converted'].sum()
 
+    # Store gold collection details
+    for _, row in gold_credits_raw.iterrows():
+        detailed_transactions['gold_collections'].append({
+            'date': row['date'],
+            'reference': row['reference'],
+            'amount': convert_to_21k(-row['amount'], row['currencyid']),
+            'original_amount': -row['amount'],
+            'currency': f"Gold ({row['currencyid']})",
+            'converted_currency': 'G21',
+            'accountid': row['accountid'],
+            'functionid': row.get('FUNCTIONID', ''),
+            'plantid': row.get('plantid', '')
+        })
+
     total_discount_negative, net_discount, discount_negative_df, discount_positive_df = get_discounts(
         raw, start_ts, end_ts, accountid
     )
+
+    # Store discount details
+    for _, row in discount_negative_df.iterrows():
+        detailed_transactions['discounts'].append({
+            'date': row['date'],
+            'reference': row['reference'],
+            'amount': row['discount_amount'],
+            'currency': 'EGP' if row['currencyid'] == 1 else f"Gold ({row['currencyid']})",
+            'type': 'خصم',
+            'accountid': row['accountid']
+        })
 
     cash_apps_all = [app for app in cash_apps
                      if start_ts <= app['credit_date'] <= end_ts
@@ -1047,6 +1093,29 @@ def get_collections_report_data(cash_apps, gold_apps, raw, start_date, end_date,
     gold_apps_sales_return = [app for app in gold_apps_all if app.get('credit_functionid', 0) == 5103]
     cash_apps_discount = [app for app in cash_apps_all if app.get('credit_plantid', 0) == 56]
     gold_apps_discount = [app for app in gold_apps_all if app.get('credit_plantid', 0) == 56]
+
+    # Store sales return details from applications
+    for app in cash_apps_sales_return:
+        detailed_transactions['sales_returns'].append({
+            'date': app['credit_date'],
+            'reference': app['credit_reference'],
+            'amount': app['apply_amt'],
+            'currency': 'EGP',
+            'type': 'مرتجع مبيعات',
+            'matched_with_debit': app['debit_reference'],
+            'accountid': app['accountid']
+        })
+
+    for app in gold_apps_sales_return:
+        detailed_transactions['sales_returns'].append({
+            'date': app['credit_date'],
+            'reference': app['credit_reference'],
+            'amount': app['apply_amt'],
+            'currency': 'G21',
+            'type': 'مرتجع مبيعات',
+            'matched_with_debit': app['debit_reference'],
+            'accountid': app['accountid']
+        })
 
     unmatched_cash_sales_return = [app for app in unmatched_credits_list
                                    if app['currencyid'] == 1 and app.get('FUNCTIONID', 0) == 5103
@@ -1074,6 +1143,31 @@ def get_collections_report_data(cash_apps, gold_apps, raw, start_date, end_date,
                             and app.get('plantid', 0) != 56
                             and start_ts <= app['date'] <= end_ts
                             and (accountid is None or app['accountid'] == accountid)]
+
+    # Store unmatched transactions
+    for app in unmatched_cash_sales_return + unmatched_cash_discount + unmatched_cash_other:
+        detailed_transactions['unmatched_transactions'].append({
+            'date': app['date'],
+            'reference': app['reference'],
+            'amount': app.get('remaining', 0),
+            'currency': 'EGP',
+            'type': 'غير متطابق',
+            'functionid': app.get('FUNCTIONID', ''),
+            'plantid': app.get('plantid', ''),
+            'accountid': app['accountid']
+        })
+
+    for app in unmatched_gold_sales_return + unmatched_gold_discount + unmatched_gold_other:
+        detailed_transactions['unmatched_transactions'].append({
+            'date': app['date'],
+            'reference': app['reference'],
+            'amount': app.get('remaining', 0),
+            'currency': 'G21',
+            'type': 'غير متطابق',
+            'functionid': app.get('FUNCTIONID', ''),
+            'plantid': app.get('plantid', ''),
+            'accountid': app['accountid']
+        })
 
     total_cash_unmatched_sales_return = sum(app.get('remaining', 0) for app in unmatched_cash_sales_return)
     total_gold_unmatched_sales_return = sum(app.get('remaining', 0) for app in unmatched_gold_sales_return)
@@ -1176,7 +1270,87 @@ def get_collections_report_data(cash_apps, gold_apps, raw, start_date, end_date,
             combined_df.loc[mask, 'المحصل ذهباً (G21)'] / total_gold * 100
     ).round(2)
 
-    return combined_df, total_cash, total_gold, cash_sales_return_amt, gold_sales_return_amt, cash_discount_amt
+    return combined_df, total_cash, total_gold, cash_sales_return_amt, gold_sales_return_amt, cash_discount_amt, detailed_transactions
+
+def display_collection_details(detailed_transactions, start_date, end_date):
+    """Display detailed collection transactions in an organized way"""
+    
+    st.subheader("📋 تفاصيل السداد والمعاملات")
+    
+    # Cash Collections
+    if detailed_transactions['cash_collections']:
+        st.write("#### 💰 السداد النقدي")
+        cash_df = pd.DataFrame(detailed_transactions['cash_collections'])
+        cash_df['date'] = pd.to_datetime(cash_df['date']).dt.date
+        cash_df = cash_df.rename(columns={
+            'date': 'التاريخ',
+            'reference': 'الرقم المرجعي',
+            'amount': 'المبلغ (EGP)',
+            'functionid': 'كود العملية',
+            'plantid': 'كود المحل'
+        })
+        st.dataframe(cash_df, use_container_width=True)
+    
+    # Gold Collections
+    if detailed_transactions['gold_collections']:
+        st.write("#### 🥇 السداد الذهب")
+        gold_df = pd.DataFrame(detailed_transactions['gold_collections'])
+        gold_df['date'] = pd.to_datetime(gold_df['date']).dt.date
+        gold_df = gold_df.rename(columns={
+            'date': 'التاريخ',
+            'reference': 'الرقم المرجعي',
+            'amount': 'المبلغ (G21)',
+            'original_amount': 'المبلغ الأصلي',
+            'currency': 'العملة',
+            'functionid': 'كود العملية',
+            'plantid': 'كود المحل'
+        })
+        st.dataframe(gold_df, use_container_width=True)
+    
+    # Sales Returns
+    if detailed_transactions['sales_returns']:
+        st.write("#### 🔄 مرتجعات المبيعات")
+        returns_df = pd.DataFrame(detailed_transactions['sales_returns'])
+        returns_df['date'] = pd.to_datetime(returns_df['date']).dt.date
+        returns_df = returns_df.rename(columns={
+            'date': 'التاريخ',
+            'reference': 'الرقم المرجعي',
+            'amount': 'المبلغ',
+            'currency': 'العملة',
+            'type': 'النوع',
+            'matched_with_debit': 'مطابق مع عملية'
+        })
+        st.dataframe(returns_df, use_container_width=True)
+    
+    # Discounts
+    if detailed_transactions['discounts']:
+        st.write("#### 💸 الخصومات")
+        discount_df = pd.DataFrame(detailed_transactions['discounts'])
+        discount_df['date'] = pd.to_datetime(discount_df['date']).dt.date
+        discount_df = discount_df.rename(columns={
+            'date': 'التاريخ',
+            'reference': 'الرقم المرجعي',
+            'amount': 'المبلغ',
+            'currency': 'العملة',
+            'type': 'النوع'
+        })
+        st.dataframe(discount_df, use_container_width=True)
+    
+    # Unmatched Transactions
+    if detailed_transactions['unmatched_transactions']:
+        st.write("#### ⚠️ المعاملات غير المتطابقة")
+        unmatched_df = pd.DataFrame(detailed_transactions['unmatched_transactions'])
+        unmatched_df['date'] = pd.to_datetime(unmatched_df['date']).dt.date
+        unmatched_df = unmatched_df.rename(columns={
+            'date': 'التاريخ',
+            'reference': 'الرقم المرجعي',
+            'amount': 'المبلغ المتبقي',
+            'currency': 'العملة',
+            'type': 'النوع',
+            'functionid': 'كود العملية',
+            'plantid': 'كود المحل'
+        })
+        st.dataframe(unmatched_df, use_container_width=True)
 
 
 def debug_transaction(reference):
@@ -1843,10 +2017,13 @@ def collections_report(role=None, username=None):
                 mime="application/pdf",
                 use_container_width=True
             )
-
+            if st.session_state.show_details:
+                display_collection_details(detailed_transactions, start_date, end_date)
+    
 
     else:
         st.info("🔍 Please specify report criteria in the sidebar and click 'Generate Report'.")
+
 
 
 
