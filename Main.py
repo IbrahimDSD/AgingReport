@@ -19,20 +19,7 @@ import time
 import importlib
 from passlib.hash import pbkdf2_sha256
 
-from aging_report import (create_db_engine, get_salespersons, get_customers,
-                          get_overdues, build_summary_pdf, build_detailed_pdf, export_charts_to_pdf,
-                          create_pie_chart, create_bar_chart, format_number, reshape_text)
-from Test import (
-    create_db_engine as discount_db_engine,
-    fetch_data,
-    convert_gold,
-    process_fifo,
-    process_report,
-    process_transactions,
-    calculate_aging_reports,
-    reshape_text as discount_reshape_text,
-    export_pdf
-)
+
 
 # Database Connection
 USER_DB_URI = (
@@ -954,7 +941,7 @@ def report_selection():
             from Test import main as run_discount
             run_discount()
         elif selected_report == "Collect Report":
-            from FinalCode import collections_report as run_collect
+            from Collect import collections_report as run_collect
             run_collect(role=st.session_state.role, username=st.session_state.username)
         elif selected_report == "Summary Worksheet Report":
             from SummaryWorkSheet import main as run_summary
@@ -1035,5 +1022,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
