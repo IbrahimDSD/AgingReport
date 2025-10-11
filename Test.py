@@ -184,21 +184,26 @@ def process_transactions(raw, discounts, extras, start_date):
     return txs
 
 def calculate_aging_reports(transactions):
-    """حساب تقرير Aging المُجمّع باستخدام FIFO"""
+    """حساب تقرير Aging المُجمّع باستخدام FIFO - كل سجل على حدة"""
     cash_debits, cash_credits, gold_debits, gold_credits = [], [], [], []
     transactions['vat_amount'] = transactions.apply(calculate_vat, axis=1)
     transactions['converted'] = transactions.apply(convert_gold, axis=1)
     
+    # معالجة كل سجل على حدة بدون تجميع
     for _, r in transactions.iterrows():
+        # عمل reference فريد لكل سجل
+        unique_ref = f"{r['reference']}_{r['functionid']}_{r['recordid']}"
+        
         entry = {
             'date': r['date'], 
-            'reference': r['reference'],
+            'reference': unique_ref,  # استخدام reference فريد
+            'original_reference': r['reference'],  # حفظ الـ reference الأصلي
             'amount': abs(r['converted']), 
             'remaining': abs(r['converted']),
             'paid_date': None, 
             'vat_amount': r['vat_amount'],
             'is_priority': r['is_priority'],
-            'plantid': r['plantid']  # Keep plantid for filtering
+            'plantid': r['plantid']
         }
                  
         if r['currencyid'] == 1:
@@ -209,14 +214,43 @@ def calculate_aging_reports(transactions):
     cash = process_fifo(cash_debits, cash_credits)
     gold = process_fifo(gold_debits, gold_credits)
     
-    # Filter out entries where plantid=56 and amount>0
-    cash = [entry for entry in cash if not (entry.get('plantid') == 56 and entry['amount'] > 0)]
-    gold = [entry for entry in gold if not (entry.get('plantid') == 56 and entry['amount'] > 0)]
+    # تحويل للـ DataFrames
+    cash_df = pd.DataFrame(cash)
+    gold_df = pd.DataFrame(gold)
     
-    cash_df = process_report(pd.DataFrame(cash), 1)
-    gold_df = process_report(pd.DataFrame(gold), 2)
+    # استعادة الـ reference الأصلي للعرض
+    if not cash_df.empty:
+        cash_df['reference'] = cash_df['original_reference']
+    if not gold_df.empty:
+        gold_df['reference'] = gold_df['original_reference']
     
-    df = pd.merge(cash_df, gold_df, on=['date', 'reference'], how='outer').fillna({
+    # تجميع النتائج النهائية بنفس الـ reference
+    if not cash_df.empty:
+        cash_agg = cash_df.groupby('reference').agg({
+            'date': 'first',
+            'amount': 'sum',
+            'remaining': 'sum',
+            'paid_date': lambda x: x.iloc[0] if len(x) == 1 else 'Multiple',
+            'vat_amount': 'sum'
+        }).reset_index()
+    else:
+        cash_agg = pd.DataFrame()
+        
+    if not gold_df.empty:
+        gold_agg = gold_df.groupby('reference').agg({
+            'date': 'first',
+            'amount': 'sum',
+            'remaining': 'sum',
+            'paid_date': lambda x: x.iloc[0] if len(x) == 1 else 'Multiple',
+            'vat_amount': 'sum'
+        }).reset_index()
+    else:
+        gold_agg = pd.DataFrame()
+    
+    cash_final = process_report(cash_agg, 1)
+    gold_final = process_report(gold_agg, 2)
+    
+    df = pd.merge(cash_final, gold_final, on=['date', 'reference'], how='outer').fillna({
         'amount_gold': 0, 'remaining_gold': 0, 'paid_date_gold': '-', 'aging_days_gold': '-', 'vat_amount_gold': 0,
         'amount_cash': 0, 'remaining_cash': 0, 'paid_date_cash': '-', 'aging_days_cash': '-', 'vat_amount_cash': 0,
     })
@@ -780,5 +814,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
