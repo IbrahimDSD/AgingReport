@@ -157,12 +157,19 @@ def process_transactions(raw, discounts, extras, start_date):
     def group_fn(g):
         fr = g.iloc[0]
         ref, cur, orig = fr['reference'], fr['currencyid'], fr['amount']
+        
+        # Debug: print group info
+        if ref == 'BT25TAN-00089':
+            print(f"DEBUG - Group for {ref}: {len(g)} rows, total amount: {g['amount'].sum()}")
+            
         if ref.startswith('S') and cur == 1:
             valid = g[~g['baseAmount'].isna()].copy()
             valid['final'] = valid.apply(calc_row, axis=1)
             amt = valid['final'].sum()
         else:
-            amt = orig
+            # للذهب، نجمع كل الـ amounts في نفس الـ reference
+            amt = g['amount'].sum()  # تغيير من fr['amount'] إلى g['amount'].sum()
+            
         return pd.Series({
             'date': fr['date'], 
             'reference': ref,
@@ -170,15 +177,16 @@ def process_transactions(raw, discounts, extras, start_date):
             'amount': amt, 
             'original_amount': orig,
             'functionid': fr['functionid'],
-            'plantid': fr['plantid']  # Keep plantid for priority calculation
+            'plantid': fr['plantid']
         })
 
-    grp = raw.groupby(['functionid', 'recordid', 'date', 'reference', 'currencyid', 'amount'])
+    # تغيير grouping علشان نجمع كل الـ reference مع بعض
+    grp = raw.groupby(['reference', 'currencyid'])  # تجميع على مستوى reference فقط
     txs = grp.apply(group_fn).reset_index(drop=True)
     txs['date'] = pd.to_datetime(txs['date'])
     txs['converted'] = txs.apply(convert_gold, axis=1)
     
-    # Mark priority transactions (functionid=3104 AND plantid=56)
+    # Mark priority transactions
     txs['is_priority'] = (txs['functionid'] == 3104) & (txs['plantid'] == 56)
     
     return txs
@@ -789,6 +797,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
