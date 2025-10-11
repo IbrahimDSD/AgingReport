@@ -730,11 +730,11 @@ def main():
 
         if not cash_details_df.empty:
             cash_details_df['date'] = pd.to_datetime(cash_details_df['date'])
-            cash_details_df = cash_details_df[(cash_details_df['date'] >= pd.to_datetime(start_date)) &
+            cash_details_df = cash_details_df[(cash_details_df['date'] >= pd.to_datetime("2023-01-01")) &
                                               (cash_details_df['date'] <= pd.to_datetime(end_date))]
         if not gold_details_df.empty:
             gold_details_df['date'] = pd.to_datetime(gold_details_df['date'])
-            gold_details_df = gold_details_df[(gold_details_df['date'] >= pd.to_datetime(start_date)) &
+            gold_details_df = gold_details_df[(gold_details_df['date'] >= pd.to_datetime("2023-01-01")) &
                                               (gold_details_df['date'] <= pd.to_datetime(end_date))]
         # Format amounts for display
         if not cash_details_df.empty:
@@ -780,4 +780,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
